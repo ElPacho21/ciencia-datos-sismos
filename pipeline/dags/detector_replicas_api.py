@@ -11,19 +11,14 @@ EN CONSTRUCCIÓN: las tareas todavía no están encadenadas.
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 
 import pendulum
 from airflow.sdk import Param, dag, task
-from sismos.bronze import (
-    bronze_path,
-)
+from sismos.bronze import bronze_path, bronze_write
+from sismos.usgs_earthquake import fetch
 
 log = logging.getLogger(__name__)
-
-CONN_ID = "sismosapi"
-
-EVENT_QUERY = "/fdsnws/event/1/query"
-EVENT_COUND = "/fdsnws/event/1/count"
 
 
 @dag(
@@ -46,6 +41,12 @@ EVENT_COUND = "/fdsnws/event/1/count"
             title="Fecha de fin",
             description=("Fecha hasta la cual obtener registros de sismos."),
         ),
+        "minmagnitude": Param(
+            0,
+            type="number",
+            title="Magnitud mínima",
+            description="Magnitud mínima de los sismos consultados.",
+        ),
         "limit": Param(
             20000,
             type="integer",
@@ -56,41 +57,45 @@ EVENT_COUND = "/fdsnws/event/1/count"
             minimum=0,
             maximum=20000,
         ),
-        "minmagnitude": Param(
-            0,
-            type="number",
-            title="Magnitud mínima",
-            description="Magnitud mínima de los sismos consultados.",
+        "force": Param(
+            False,
+            type="boolean",
+            title="Forzar la corrida",
+            description=(
+                "Ignora todas las cachés: baja aunque la fuente no "
+                "haya cambiado, y vuelve a pedir el csv que ya "
+                "en bronce."
+            ),
         ),
     },
 )
 def detector_replicas_api():
-    @task()
-    def obtener_sismos_dict(**context):
+    @task
+    def land_bronze(**context) -> Path:
         params = context["params"]
-        return {
-            "starttime": params["starttime"],
-            "endtime": params["endtime"],
-            "minmagnitude": params["minmagnitude"],
-        }
 
-    @task()
-    def land_bronze(sismos: dict) -> dict:
+        starttime = params["starttime"]
+        endtime = params["endtime"]
+        minmagnitude = params["minmagnitude"]
+
         destino = bronze_path(
-            sismos["starttime"], sismos["endtime"], sismos["minmagnitude"]
+            starttime=starttime, endtime=endtime, minmagnitude=minmagnitude
         )
-        if destino.exists() and not sismos["force"]:
+
+        if destino.exists() and not params["force"]:
             log.info("Se reutilizó un csv ya persistido.")
-        else:
-            log.info("Se reutilizó un csv ya persistido.")
+            return destino
+
+        csv = fetch(starttime=starttime, endtime=endtime, minmagnitude=minmagnitude)
+        bronze_write(destino, csv)
+        log.info("Se reutilizó un csv ya persistido.")
         return destino
 
     @task()
-    def refine_silver(sismos: dict) -> dict:
+    def refine_silver(sismos: dict):
         pass
 
-    sismos_dict = obtener_sismos_dict()
-    land_bronze.expand(sismos=sismos_dict)
+    land_bronze()
 
 
 # Sin esta llamada el DAG no queda registrado: el decorador @dag sólo devuelve
