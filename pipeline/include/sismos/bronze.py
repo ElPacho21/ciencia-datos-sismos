@@ -31,7 +31,10 @@ def bronze_write(destino: Path, csv) -> None:
         f.write(csv)
 
 
-def bronze_read(ruta: Path) -> str:
-    with gzip.open(ruta, "rb", encoding="utf-8") as f:
-        return ""
-        return f.read()
+def bronze_load(ruta: Path) -> pd.DataFrame:
+    """Lee el csv crudo tal cual vino de la API, sin castear nada.
+
+    Todo entra como texto a propósito: castear y descartar filas es
+    responsabilidad de silver, así bronze sigue siendo un espejo de la fuente.
+    """
+    return pd.read_csv(ruta, dtype=str, encoding="utf-8")
