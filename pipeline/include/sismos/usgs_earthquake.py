@@ -30,7 +30,7 @@ def fetch(
                 extra_options={"check_response": True},
             )
 
-            return resp
+            return resp.content
         except Exception:
             if intento == retries - 1:
                 raise
