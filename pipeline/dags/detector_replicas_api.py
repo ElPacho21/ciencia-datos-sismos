@@ -5,7 +5,8 @@ comprimido y particionado por parámetros de consulta) y después refina a
 silver. Se dispara a mano porque los parámetros de la ventana los elige quien
 lo corre.
 
-EN CONSTRUCCIÓN: las tareas todavía no están encadenadas.
+EN CONSTRUCCIÓN: falta todo lo que es propio del método de Zaliapin &
+Ben-Zion (magnitud de completitud, b, d, vecino más cercano, thinning).
 """
 
 from __future__ import annotations
@@ -15,7 +16,8 @@ from pathlib import Path
 
 import pendulum
 from airflow.sdk import Param, dag, task
-from sismos.bronze import bronze_path, bronze_write
+from sismos.bronze import bronze_load, bronze_path, bronze_write
+from sismos.silver import refine, silver_path, silver_write
 from sismos.usgs_earthquake import fetch
 
 log = logging.getLogger(__name__)
@@ -70,8 +72,10 @@ log = logging.getLogger(__name__)
     },
 )
 def detector_replicas_api():
+    # Las rutas viajan entre tareas como str: el XCom se serializa a JSON y un
+    # Path no sobrevive el viaje.
     @task
-    def land_bronze(**context) -> Path:
+    def land_bronze(**context) -> str:
         params = context["params"]
 
         starttime = params["starttime"]
@@ -84,18 +88,33 @@ def detector_replicas_api():
 
         if destino.exists() and not params["force"]:
             log.info("Se reutilizó un csv ya persistido.")
-            return destino
+            return str(destino)
 
         csv = fetch(starttime=starttime, endtime=endtime, minmagnitude=minmagnitude)
         bronze_write(destino, csv)
-        log.info("Se reutilizó un csv ya persistido.")
-        return destino
+        log.info("Se bajó el csv de la API a %s.", destino)
+        return str(destino)
 
-    @task()
-    def refine_silver(sismos: dict):
-        pass
+    @task
+    def refine_silver(bronze_ruta: str, **context) -> str:
+        params = context["params"]
 
-    land_bronze()
+        destino = silver_path(
+            starttime=params["starttime"],
+            endtime=params["endtime"],
+            minmagnitude=params["minmagnitude"],
+        )
+
+        if destino.exists() and not params["force"]:
+            log.info("Se reutilizó un parquet de silver ya persistido.")
+            return str(destino)
+
+        sismos = refine(bronze_load(Path(bronze_ruta)))
+        silver_write(destino, sismos)
+        log.info("Se refinaron %d eventos a %s.", len(sismos), destino)
+        return str(destino)
+
+    refine_silver(land_bronze())
 
 
 # Sin esta llamada el DAG no queda registrado: el decorador @dag sólo devuelve
