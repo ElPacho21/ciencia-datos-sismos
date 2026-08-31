@@ -1,0 +1,9 @@
+# Dependencias SÓLO para el editor y los tests locales. La imagen no las usa:
+# el Dockerfile instala requirements.txt y nada más.
+#
+# Están acá para que Pylance resuelva `airflow.sdk`, `pendulum` y los
+# providers, y así haya autocompletado y chequeo de tipos al editar los DAGs.
+apache-airflow>=3,<4
+apache-airflow-providers-http>=6.0
+pandas>=2.2
+pytest>=8.0

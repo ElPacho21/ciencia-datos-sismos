@@ -1,0 +1,15 @@
+.env
+
+# airflow_settings.yaml normalmente se ignora porque ahí van credenciales.
+# El nuestro sólo declara la URL del servicio FDSN del USGS, que es pública,
+# así que se versiona para que la conexión exista al primer `astro dev start`.
+# Cuando el proyecto necesite una API key, sacalo de acá.
+logs/
+__pycache__/
+*.pyc
+
+# Venv sólo para el editor: se reconstruye con requirements-dev.txt.
+.venv/
+
+# Las capas bronze/silver se regeneran corriendo el DAG.
+include/output/

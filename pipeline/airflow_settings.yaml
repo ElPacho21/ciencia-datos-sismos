@@ -1,0 +1,27 @@
+# Conexiones, pools y variables para el entorno LOCAL de desarrollo.
+# Astro CLI las carga solas al hacer `astro dev start`, así que no hay que
+# darlas de alta a mano desde la interfaz.
+#
+# Este archivo SÍ se versiona porque no tiene ningún secreto: el servicio FDSN
+# del USGS es abierto. Se declara igual porque HttpOperator está diseñado para
+# recibir un `http_conn_id` con la URL base. Si algún día entra una API key
+# acá, hay que sacarla y agregar el archivo al .gitignore.
+
+airflow:
+  connections:
+    - conn_id: sismosapi
+      conn_type: http
+      conn_host: earthquake.usgs.gov
+      conn_schema: https
+
+      conn_login:
+      conn_password:
+      conn_port:
+      conn_extra:
+  pools:
+    - pool_name:
+      pool_slot:
+      pool_description:
+  variables:
+    - variable_name:
+      variable_value:

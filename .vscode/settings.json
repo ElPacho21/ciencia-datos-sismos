@@ -1,0 +1,15 @@
+{
+  // Intérprete del venv local. NO es el que corre los DAGs -- eso pasa dentro
+  // del contenedor de Astro. Este existe sólo para que el editor resuelva
+  // imports, autocomplete y tipos.
+  "python.defaultInterpreterPath": "${workspaceFolder}/pipeline/.venv/Scripts/python.exe",
+
+  // Dentro del contenedor, include/ está en el PYTHONPATH (ver el Dockerfile).
+  // Esto le enseña lo mismo a Pylance para que `from sismos.bronze import ...`
+  // no aparezca como no resuelto.
+  "python.analysis.extraPaths": ["pipeline/include", "pipeline/dags"],
+  "python.analysis.typeCheckingMode": "basic",
+
+  "python.testing.pytestEnabled": true,
+  "python.testing.pytestArgs": ["pipeline/tests"]
+}
