@@ -15,7 +15,9 @@ sola desde `airflow_settings.yaml`, así que el DAG se puede disparar sin tocar
 nada más.
 
 `detector_replicas_api` no tiene schedule: se dispara a mano con *Trigger DAG
-w/ config* y se le pasan `starttime`, `endtime`, `limit` y `minmagnitude`.
+w/ config*. Los parámetros de la consulta son `starttime`, `endtime`, `limit` y
+`minmagnitude`; `mc_metodo` elige cómo estimar la magnitud de completitud y
+`force` ignora todo lo ya persistido y recalcula de cero.
 
 ## Estructura
 
@@ -23,7 +25,7 @@ w/ config* y se le pasan `starttime`, `endtime`, `limit` y `minmagnitude`.
 |---|---|
 | `dags/` | Orquestación: schedule, params, dependencias entre tareas. |
 | `include/sismos/` | La lógica importable. Se llega como `import sismos` gracias al `PYTHONPATH` del Dockerfile. |
-| `include/output/` | Capas bronze y silver. No se versiona: se regenera corriendo el DAG. |
+| `include/output/` | Salida de cada paso: `bronze/` y `silver/` con el catálogo, y `parametros/`, `vecinos/` y `umbral/` con lo que produce el método. No se versiona: se regenera corriendo el DAG. |
 | `tests/dags/` | Chequeos de integridad del DAG. |
 | `airflow_settings.yaml` | Conexiones del entorno local. Hoy no tiene secretos. |
 
