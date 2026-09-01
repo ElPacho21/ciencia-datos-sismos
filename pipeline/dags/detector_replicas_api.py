@@ -5,8 +5,8 @@ comprimido y particionado por parámetros de consulta) y después refina a
 silver. Se dispara a mano porque los parámetros de la ventana los elige quien
 lo corre.
 
-EN CONSTRUCCIÓN: falta todo lo que es propio del método de Zaliapin &
-Ben-Zion (magnitud de completitud, b, d, vecino más cercano, thinning).
+EN CONSTRUCCIÓN: ya están Mc, b y d; falta el vecino más cercano, el umbral
+eta, el thinning y el armado de los clusters.
 """
 
 from __future__ import annotations
@@ -17,7 +17,13 @@ from pathlib import Path
 import pendulum
 from airflow.sdk import Param, dag, task
 from sismos.bronze import bronze_load, bronze_path, bronze_write
-from sismos.silver import refine, silver_path, silver_write
+from sismos.parametros import (
+    estimate,
+    parametros_path,
+    parametros_read,
+    parametros_write,
+)
+from sismos.silver import refine, silver_path, silver_read, silver_write
 from sismos.usgs_earthquake import fetch
 
 log = logging.getLogger(__name__)
@@ -58,6 +64,17 @@ log = logging.getLogger(__name__)
             ),
             minimum=0,
             maximum=20000,
+        ),
+        "mc_metodo": Param(
+            "gft",
+            type="string",
+            enum=["gft", "maxc"],
+            title="Método para la magnitud de completitud",
+            description=(
+                "Cómo estimar Mc. 'gft' es bondad de ajuste (Wiemer & Wyss), "
+                "más exigente; 'maxc' es máxima curvatura, más permisivo y "
+                "usado como fallback cuando gft no llega al objetivo."
+            ),
         ),
         "force": Param(
             False,
@@ -114,7 +131,39 @@ def detector_replicas_api():
         log.info("Se refinaron %d eventos a %s.", len(sismos), destino)
         return str(destino)
 
-    refine_silver(land_bronze())
+    @task
+    def estimate_mc_b_d(silver_ruta: str, **context) -> str:
+        params = context["params"]
+
+        destino = parametros_path(
+            starttime=params["starttime"],
+            endtime=params["endtime"],
+            minmagnitude=params["minmagnitude"],
+        )
+
+        if destino.exists() and not params["force"]:
+            guardado = parametros_read(destino)
+            # A diferencia de bronze y silver, acá la partición no alcanza para
+            # decidir si sirve lo persistido: los mismos datos con otro método
+            # de Mc dan otros parámetros. Se comparan los knobs con los que se
+            # calculó y sólo se reutiliza si son los mismos.
+            if guardado.get("knobs", {}).get("mc_metodo") == params["mc_metodo"]:
+                log.info(
+                    "Se reutilizaron los parámetros ya estimados: Mc=%.2f, b=%.3f, d=%.3f.",
+                    guardado["mc"],
+                    guardado["b"],
+                    guardado["d"],
+                )
+                return str(destino)
+            log.info("Los parámetros persistidos son de otro método de Mc: se recalcula.")
+
+        parametros = estimate(
+            silver_read(Path(silver_ruta)), mc_metodo=params["mc_metodo"]
+        )
+        parametros_write(destino, parametros)
+        return str(destino)
+
+    estimate_mc_b_d(refine_silver(land_bronze()))
 
 
 # Sin esta llamada el DAG no queda registrado: el decorador @dag sólo devuelve
