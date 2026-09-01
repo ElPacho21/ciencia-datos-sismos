@@ -5,7 +5,7 @@ comprimido y particionado por parámetros de consulta) y después refina a
 silver. Se dispara a mano porque los parámetros de la ventana los elige quien
 lo corre.
 
-EN CONSTRUCCIÓN: ya están Mc, b y d; falta el vecino más cercano, el umbral
+EN CONSTRUCCIÓN: ya están Mc, b, d y el bosque de padres; falta el umbral
 eta, el thinning y el armado de los clusters.
 """
 
@@ -16,6 +16,10 @@ from pathlib import Path
 
 import pendulum
 from airflow.sdk import Param, dag, task
+
+# Se importa el módulo entero porque la tarea del DAG se llama igual que la
+# función que la hace, y de otro modo una taparía a la otra.
+from sismos import vecinos
 from sismos.bronze import bronze_load, bronze_path, bronze_write
 from sismos.parametros import (
     estimate,
@@ -155,7 +159,9 @@ def detector_replicas_api():
                     guardado["d"],
                 )
                 return str(destino)
-            log.info("Los parámetros persistidos son de otro método de Mc: se recalcula.")
+            log.info(
+                "Los parámetros persistidos son de otro método de Mc: se recalcula."
+            )
 
         parametros = estimate(
             silver_read(Path(silver_ruta)), mc_metodo=params["mc_metodo"]
@@ -163,7 +169,40 @@ def detector_replicas_api():
         parametros_write(destino, parametros)
         return str(destino)
 
-    estimate_mc_b_d(refine_silver(land_bronze()))
+    @task
+    def nearest_neighbor(silver_ruta: str, parametros_ruta: str, **context) -> str:
+        params = context["params"]
+
+        destino = vecinos.vecinos_path(
+            starttime=params["starttime"],
+            endtime=params["endtime"],
+            minmagnitude=params["minmagnitude"],
+        )
+        fuente = Path(parametros_ruta)
+
+        # Acá no alcanza con que el archivo exista: el bosque de padres depende
+        # de Mc, b y d, que se recalculan aguas arriba. Si el json de
+        # parámetros es más nuevo que este parquet, lo que hay quedó viejo.
+        if (
+            destino.exists()
+            and not params["force"]
+            and destino.stat().st_mtime >= fuente.stat().st_mtime
+        ):
+            log.info("Se reutilizó un bosque de padres ya persistido.")
+            return str(destino)
+
+        parametros = parametros_read(fuente)
+        emparentados = vecinos.nearest_neighbor(
+            silver_read(Path(silver_ruta)),
+            b=parametros["b"],
+            d=parametros["d"],
+            mc=parametros["mc"],
+        )
+        vecinos.vecinos_write(destino, emparentados)
+        return str(destino)
+
+    silver_ruta = refine_silver(land_bronze())
+    nearest_neighbor(silver_ruta, estimate_mc_b_d(silver_ruta))
 
 
 # Sin esta llamada el DAG no queda registrado: el decorador @dag sólo devuelve
