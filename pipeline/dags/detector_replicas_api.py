@@ -28,6 +28,7 @@ from sismos.parametros import (
     parametros_write,
 )
 from sismos.silver import refine, silver_path, silver_read, silver_write
+from sismos.umbral import fit_threshold, umbral_path, umbral_write
 from sismos.usgs_earthquake import fetch
 
 log = logging.getLogger(__name__)
@@ -201,8 +202,31 @@ def detector_replicas_api():
         vecinos.vecinos_write(destino, emparentados)
         return str(destino)
 
+    @task
+    def fit_eta_threshold(vecinos_ruta: str, **context) -> str:
+        params = context["params"]
+
+        destino = umbral_path(
+            starttime=params["starttime"],
+            endtime=params["endtime"],
+            minmagnitude=params["minmagnitude"],
+        )
+        fuente = Path(vecinos_ruta)
+
+        if (
+            destino.exists()
+            and not params["force"]
+            and destino.stat().st_mtime >= fuente.stat().st_mtime
+        ):
+            log.info("Se reutilizó un umbral ya ajustado.")
+            return str(destino)
+
+        umbral = fit_threshold(vecinos.vecinos_read(fuente))
+        umbral_write(destino, umbral)
+        return str(destino)
+
     silver_ruta = refine_silver(land_bronze())
-    nearest_neighbor(silver_ruta, estimate_mc_b_d(silver_ruta))
+    fit_eta_threshold(nearest_neighbor(silver_ruta, estimate_mc_b_d(silver_ruta)))
 
 
 # Sin esta llamada el DAG no queda registrado: el decorador @dag sólo devuelve
