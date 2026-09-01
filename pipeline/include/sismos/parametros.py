@@ -32,22 +32,30 @@ import numpy as np
 import pandas as pd
 
 from sismos import OUTPUT_DIR, particion
+from sismos.geo import CHUNK_DISTANCIAS, distancias_epicentrales
 
 log = logging.getLogger(__name__)
 
 PARAMETROS_DIR = OUTPUT_DIR / "parametros"
 
-RADIO_TIERRA_KM = 6371.0
-
 # El USGS publica las magnitudes en una grilla de 0.1 (con excepciones que se
 # redondean), y el binning entra en la corrección de Aki.
 BIN_MAGNITUD = 0.1
 
-# Filas por bloque al calcular distancias de a pares: la matriz completa de un
-# catálogo de 20000 eventos no entra en memoria.
-CHUNK_DISTANCIAS = 256
-
 LOG10_E = float(np.log10(np.e))
+
+
+def recortar_a_mc(
+    sismos: pd.DataFrame, mc: float, bin_magnitud: float = BIN_MAGNITUD
+) -> pd.DataFrame:
+    """Se queda con los eventos completos, los de magnitud >= Mc.
+
+    El corte va sobre las magnitudes binneadas, igual que adentro de `b_aki`:
+    con las crudas queda corrido medio bin y no todos los pasos terminarían
+    trabajando exactamente sobre el mismo subcatálogo.
+    """
+    binneadas = np.round(sismos["mag"].to_numpy(dtype=float) / bin_magnitud)
+    return sismos[binneadas * bin_magnitud >= mc - bin_magnitud / 4]
 
 
 def parametros_path(starttime, endtime, minmagnitude) -> Path:
@@ -176,24 +184,6 @@ def mc_gft(
     return None, (float(mejor_r) if np.isfinite(mejor_r) else None)
 
 
-def _distancias_epicentrales(lat_rad, lon_rad, desde: int, hasta: int) -> np.ndarray:
-    """Haversine de un bloque de filas contra todo el catálogo, en km.
-
-    Distancia epicentral y no hipocentral: es la que usan Zaliapin & Ben-Zion,
-    porque la profundidad tiene un error mucho mayor que el epicentro y
-    ensuciaría el escaleo.
-    """
-    lat_bloque = lat_rad[desde:hasta, None]
-    dlat = lat_bloque - lat_rad[None, :]
-    dlon = lon_rad[desde:hasta, None] - lon_rad[None, :]
-
-    a = (
-        np.sin(dlat / 2) ** 2
-        + np.cos(lat_bloque) * np.cos(lat_rad[None, :]) * np.sin(dlon / 2) ** 2
-    )
-    return 2 * RADIO_TIERRA_KM * np.arcsin(np.sqrt(np.clip(a, 0.0, 1.0)))
-
-
 def correlation_curve(
     latitudes: np.ndarray,
     longitudes: np.ndarray,
@@ -218,7 +208,7 @@ def correlation_curve(
 
     for desde in range(0, n, chunk):
         hasta = min(desde + chunk, n)
-        distancias = _distancias_epicentrales(lat_rad, lon_rad, desde, hasta)
+        distancias = distancias_epicentrales(lat_rad, lon_rad, desde, hasta)
         histograma, _ = np.histogram(distancias, bins=bordes)
         conteo += np.cumsum(histograma)
 
@@ -337,11 +327,7 @@ def estimate(
             mc,
         )
 
-    # Se recorta con las magnitudes binneadas, igual que adentro de b_aki: con
-    # las crudas el corte queda corrido medio bin y b y d no se calcularían
-    # exactamente sobre el mismo subcatálogo.
-    binneadas = np.round(magnitudes / bin_magnitud) * bin_magnitud
-    completos = sismos[binneadas >= mc - bin_magnitud / 4]
+    completos = recortar_a_mc(sismos, mc, bin_magnitud)
     if len(completos) < min_eventos:
         raise ValueError(
             f"Sólo quedan {len(completos)} eventos por encima de Mc={mc:.2f} "
