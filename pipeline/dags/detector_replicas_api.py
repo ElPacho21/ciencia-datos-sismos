@@ -5,8 +5,8 @@ comprimido y particionado por parámetros de consulta) y después refina a
 silver. Se dispara a mano porque los parámetros de la ventana los elige quien
 lo corre.
 
-EN CONSTRUCCIÓN: ya están Mc, b, d y el bosque de padres; falta el umbral
-eta, el thinning y el armado de los clusters.
+EN CONSTRUCCIÓN: ya están Mc, b, d, el bosque de padres, el umbral eta y el
+thinning probabilístico; falta armar los clusters y contar las réplicas.
 """
 
 from __future__ import annotations
@@ -17,9 +17,9 @@ from pathlib import Path
 import pendulum
 from airflow.sdk import Param, dag, task
 
-# Se importa el módulo entero porque la tarea del DAG se llama igual que la
-# función que la hace, y de otro modo una taparía a la otra.
-from sismos import vecinos
+# Se importan los módulos enteros porque varias tareas del DAG se llaman igual
+# que la función que las hace, y de otro modo una taparía a la otra.
+from sismos import replicas, vecinos
 from sismos.bronze import bronze_load, bronze_path, bronze_write
 from sismos.parametros import (
     estimate,
@@ -28,7 +28,7 @@ from sismos.parametros import (
     parametros_write,
 )
 from sismos.silver import refine, silver_path, silver_read, silver_write
-from sismos.umbral import fit_threshold, umbral_path, umbral_write
+from sismos.umbral import fit_threshold, umbral_path, umbral_read, umbral_write
 from sismos.usgs_earthquake import fetch
 
 log = logging.getLogger(__name__)
@@ -80,6 +80,31 @@ log = logging.getLogger(__name__)
                 "más exigente; 'maxc' es máxima curvatura, más permisivo y "
                 "usado como fallback cuando gft no llega al objetivo."
             ),
+        ),
+        "seed": Param(
+            0,
+            type="integer",
+            title="Semilla",
+            description=(
+                "El thinning es probabilístico: baraja el catálogo y sortea qué "
+                "enlaces devuelve al fondo. Sin fijar la semilla los resultados "
+                "no se reproducen, así que queda registrada en el nombre de los "
+                "archivos que produce."
+            ),
+            minimum=0,
+        ),
+        "n_randomizaciones": Param(
+            5,
+            type="integer",
+            title="Barajadas del catálogo nulo",
+            description=(
+                "Cuántas veces se baraja el catálogo para estimar la "
+                "distribución de eta bajo puro azar. Más barajadas dan un nulo "
+                "menos ruidoso, pero cada una es una corrida completa del vecino "
+                "más cercano."
+            ),
+            minimum=1,
+            maximum=50,
         ),
         "force": Param(
             False,
@@ -225,8 +250,95 @@ def detector_replicas_api():
         umbral_write(destino, umbral)
         return str(destino)
 
+    @task
+    def randomize_catalog(silver_ruta: str, parametros_ruta: str, **context) -> str:
+        params = context["params"]
+
+        destino = replicas.nulo_path(
+            starttime=params["starttime"],
+            endtime=params["endtime"],
+            minmagnitude=params["minmagnitude"],
+            seed=params["seed"],
+            n_repeticiones=params["n_randomizaciones"],
+        )
+        fuente = Path(parametros_ruta)
+
+        # La semilla y las repeticiones ya están en el nombre del archivo, así
+        # que alcanza con comparar contra los parámetros de aguas arriba.
+        if (
+            destino.exists()
+            and not params["force"]
+            and destino.stat().st_mtime >= fuente.stat().st_mtime
+        ):
+            log.info("Se reutilizó un catálogo nulo ya persistido.")
+            return str(destino)
+
+        parametros = parametros_read(fuente)
+        nulo = replicas.randomize_catalog(
+            silver_read(Path(silver_ruta)),
+            b=parametros["b"],
+            d=parametros["d"],
+            mc=parametros["mc"],
+            n_repeticiones=params["n_randomizaciones"],
+            seed=params["seed"],
+        )
+        replicas.nulo_write(destino, nulo)
+        return str(destino)
+
+    @task
+    def thinning(
+        vecinos_ruta: str, nulo_ruta: str, umbral_ruta: str, **context
+    ) -> str:
+        params = context["params"]
+
+        destino = replicas.replicas_path(
+            starttime=params["starttime"],
+            endtime=params["endtime"],
+            minmagnitude=params["minmagnitude"],
+            seed=params["seed"],
+        )
+        fuentes = [Path(vecinos_ruta), Path(nulo_ruta), Path(umbral_ruta)]
+
+        if (
+            destino.exists()
+            and not params["force"]
+            and all(destino.stat().st_mtime >= f.stat().st_mtime for f in fuentes)
+        ):
+            log.info("Se reutilizó una clasificación de réplicas ya persistida.")
+            return str(destino)
+
+        umbral = umbral_read(Path(umbral_ruta))
+        emparentados = vecinos.vecinos_read(Path(vecinos_ruta))
+
+        # El nulo no entra en la clasificación: sirve para saber si la
+        # bimodalidad que se está usando para clasificar es real.
+        contraste = replicas.contrastar_con_nulo(
+            emparentados,
+            replicas.nulo_read(Path(nulo_ruta)),
+            log10_eta0=umbral["log10_eta0"],
+        )
+
+        # El sorteo usa una semilla derivada de la del DAG: barajar el catálogo
+        # y sortear los enlaces son cosas distintas y no comparten el flujo.
+        clasificados, diagnostico = replicas.thin(
+            emparentados,
+            mezcla=umbral["mezcla"],
+            log10_eta0=umbral["log10_eta0"],
+            seed=params["seed"] + 1,
+        )
+        replicas.replicas_write(destino, clasificados)
+        log.info("Thinning: %s | contraste con el nulo: %s", diagnostico, contraste)
+        return str(destino)
+
     silver_ruta = refine_silver(land_bronze())
-    fit_eta_threshold(nearest_neighbor(silver_ruta, estimate_mc_b_d(silver_ruta)))
+    parametros_ruta = estimate_mc_b_d(silver_ruta)
+    vecinos_ruta = nearest_neighbor(silver_ruta, parametros_ruta)
+
+    thinning(
+        vecinos_ruta,
+        randomize_catalog(silver_ruta, parametros_ruta),
+        fit_eta_threshold(vecinos_ruta),
+    )
 
 
 # Sin esta llamada el DAG no queda registrado: el decorador @dag sólo devuelve

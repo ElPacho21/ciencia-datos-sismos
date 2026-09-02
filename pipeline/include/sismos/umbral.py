@@ -62,6 +62,31 @@ def _normal_acumulada(x: float, mu: float, sigma: float) -> float:
     return 0.5 * (1.0 + math.erf((x - mu) / (sigma * math.sqrt(2.0))))
 
 
+def posterior_fondo(log10_eta, mezcla: dict) -> np.ndarray:
+    """Probabilidad de que cada evento sea fondo, según la mezcla ajustada.
+
+    Es la misma responsabilidad que calcula el EM, evaluada fuera del ajuste:
+    qué fracción de la densidad en ese punto aporta la componente del fondo.
+
+    La diferencia con el corte duro por eta_0 es todo el asunto: un evento
+    justo al lado del umbral no cae de un lado ni del otro, queda con una
+    probabilidad intermedia. Eso es lo que después sortea el thinning.
+    """
+    x = np.asarray(log10_eta, dtype=float)
+    f_replicas = mezcla["peso_replicas"] * _densidad(
+        x, mezcla["mu_replicas"], mezcla["sigma_replicas"]
+    )
+    f_fondo = mezcla["peso_fondo"] * _densidad(
+        x, mezcla["mu_fondo"], mezcla["sigma_fondo"]
+    )
+    return f_fondo / np.maximum(f_replicas + f_fondo, 1e-300)
+
+
+def separacion_de_modos(mu, sigma) -> float:
+    """Distancia entre medias en unidades de desvío típico."""
+    return float((mu[1] - mu[0]) / math.sqrt((sigma[0] ** 2 + sigma[1] ** 2) / 2))
+
+
 def ajustar_mezcla(x: np.ndarray, max_iter: int = 500, tol: float = 1e-9):
     """EM para una mezcla de dos gaussianas en una dimensión.
 
@@ -157,7 +182,7 @@ def fit_threshold(
 
     # Distancia entre medias en unidades de desvío: es lo que dice si los dos
     # modos son de verdad dos modos o un solo bulto que el EM partió al medio.
-    separacion = float((mu[1] - mu[0]) / math.sqrt((sigma[0] ** 2 + sigma[1] ** 2) / 2))
+    separacion = separacion_de_modos(mu, sigma)
 
     ajustado = cruce_componentes(pesos, mu, sigma)
 

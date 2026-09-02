@@ -132,6 +132,44 @@ presupone que la bimodalidad existe, y si el catálogo es chico o mezcla
 regiones muy distintas, los dos modos se pisan y el umbral pasa a ser un número
 frágil que conviene fijar a mano.
 
+### `randomize_catalog` → un mundo donde no pasa nada
+
+Baraja los tiempos y las magnitudes entre sí y deja los epicentros donde están.
+Eso destruye la asociación temporal pero conserva la geografía del catálogo
+—que responde a los bordes de placa, no a las réplicas— y da la distribución de
+eta **si no hubiera réplicas en absoluto**.
+
+Sirve para contestar la pregunta que ningún ajuste puede contestar solo: ¿la
+bimodalidad es del catálogo, o la fabrica la métrica? Si el catálogo barajado
+también se parte en dos modos y cae bajo el umbral la misma proporción de
+eventos, entonces lo que se está marcando como réplicas es la forma que tiene
+eta cuando no pasa nada.
+
+Es la parte cara: cada barajada es una corrida completa del vecino más cercano.
+Y es estocástica, así que la semilla es un parámetro del DAG y queda escrita en
+el nombre de los archivos que produce.
+
+### `thinning` → de la línea dura al sorteo
+
+El umbral parte la población con una línea, pero esa línea miente en los
+bordes: un evento que cae justo por debajo no es más réplica que uno que cae
+justo por encima. El thinning reemplaza la línea por un sorteo: a cada evento
+se le calcula la probabilidad de ser fondo y se lo devuelve al fondo con esa
+probabilidad. Los que están lejos del umbral casi no se mueven; los del medio
+se reparten. De ahí sale `is_aftershock`.
+
+**Una desviación del paper que conviene tener presente.** Zaliapin & Ben-Zion
+estiman el peso del fondo comparando la distribución observada contra la del
+catálogo barajado. Acá la probabilidad sale de la mezcla de dos gaussianas ya
+ajustada, no del barajado, porque sobre este catálogo el barajado **no
+identifica ese peso**: al conservar N, tiene el doble de densidad que el fondo
+que quiere modelar, sus vecinos caen más cerca y su eta se corre hacia abajo.
+Sobre un control con 50% de réplicas plantadas el cociente entre distribuciones
+devuelve 0.96 en vez de 0.50, y submuestrear el nulo para igualar densidades no
+lo arregla: la ecuación de punto fijo o es degenerada o converge igual al valor
+equivocado. El posterior de la mezcla, en cambio, recupera el 50% con 94.6% de
+precisión.
+
 ## Una corrida de referencia
 
 Catálogo global, del 1 al 30 de agosto de 2026, magnitud mínima 2.5:
@@ -144,8 +182,9 @@ Catálogo global, del 1 al 30 de agosto de 2026, magnitud mínima 2.5:
 | `d` | 1.756 (R² 0.9919, entre 0.7 y 65 km) |
 | Umbral | log₁₀ η₀ = −4.637 |
 | Por debajo del umbral | 367 de 875 (41.9%) |
+| Réplicas después del thinning | 375 de 876 (42.8%), semilla 1 |
 
-Dos cosas que vale la pena mirar de esa corrida:
+Tres cosas que vale la pena mirar de esa corrida:
 
 **El contraste entre los dos métodos de Mc.** Con máxima curvatura, Mc baja a
 2.80 y `b` se desploma a **0.332**, que es físicamente imposible. Es la firma
@@ -156,6 +195,15 @@ bondad de ajuste, y por eso el código avisa cuando `b` sale fuera de 0.5–2.0.
 **La bimodalidad está, pero justa.** Los dos modos quedan separados 2.82
 desvíos y el modelo estima un 6.7% de error de clasificación. Pasa el piso, pero
 sin holgura: el valle es más un hombro que un pozo.
+
+**El contraste con el catálogo barajado dispara la alarma.** Bajo el umbral cae
+el 41.9% del catálogo real y el 37.9% del barajado: un exceso sobre el azar de
+apenas 4.1 puntos, contra los 8.0 que da un control sintético con réplicas
+plantadas de verdad. El contraste es *conservador* por construcción —el nulo
+conserva N y por lo tanto es más denso que el fondo verdadero, lo que infla su
+proporción bajo el umbral— así que un exceso chico no prueba que no haya
+réplicas. Pero sí dice que sobre un mes de catálogo global la señal es débil, y
+es el argumento más fuerte para acotar la región.
 
 ## Cómo se sabe que las cuentas están bien
 
@@ -170,13 +218,14 @@ Cada paso se contrastó contra un caso de respuesta conocida:
 | Bimodalidad | Catálogo sintético **sin** réplicas plantadas | Unimodal: no inventa un segundo modo |
 | Bimodalidad | Catálogo sintético **con** 50% de réplicas plantadas | Detecta 48.4%, separación 4.72 desvíos |
 | Mezcla gaussiana | Mezcla sintética de parámetros conocidos | Recupera pesos, medias y desvíos con dos decimales |
+| Thinning | Catálogo con 50% de réplicas plantadas | Marca 49.6%, precisión 94.6%, recall 93.8% |
+| Thinning | Catálogo **sin** réplicas plantadas | Marca 25.6% — pero el contraste con el nulo da 0.0 puntos de exceso y avisa que eso es azar |
+| Semilla | Cinco semillas sobre el catálogo real | Entre 375 y 390 réplicas (42.8–44.5%); con la misma semilla, idéntico |
 
 ## Lo que falta
 
 | Tarea | Qué haría |
 |---|---|
-| `randomize_catalog` | Construir la distribución nula de eta reordenando el catálogo al azar. Es caro y estocástico: hay que fijar la semilla y persistir el resultado, o los números del informe no se reproducen. |
-| `thinning` | Devolver al fondo los pares que, aun cayendo bajo el umbral, son compatibles con el azar. Es lo que convierte el corte duro en una decisión con probabilidad, y de ahí sale `is_aftershock`. |
 | `build_clusters` | Recorrer el bosque. Agrupar por `parent_id` cuenta sólo los hijos directos, y una réplica también tiene réplicas: el sismo principal es la raíz del árbol entero. Recién ahí sale la cuenta de réplicas por sismo principal. |
 
 Y un pendiente que no es una tarea sino una decisión de método: **acotar el

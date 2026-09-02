@@ -25,7 +25,7 @@ w/ config*. Los parámetros de la consulta son `starttime`, `endtime`, `limit` y
 |---|---|
 | `dags/` | Orquestación: schedule, params, dependencias entre tareas. |
 | `include/sismos/` | La lógica importable. Se llega como `import sismos` gracias al `PYTHONPATH` del Dockerfile. |
-| `include/output/` | Salida de cada paso: `bronze/` y `silver/` con el catálogo, y `parametros/`, `vecinos/` y `umbral/` con lo que produce el método. No se versiona: se regenera corriendo el DAG. |
+| `include/output/` | Salida de cada paso: `bronze/` y `silver/` con el catálogo, y `parametros/`, `vecinos/`, `umbral/`, `nulo/` y `replicas/` con lo que produce el método. Lo que depende de la semilla la lleva en el nombre. No se versiona: se regenera corriendo el DAG. |
 | `tests/dags/` | Chequeos de integridad del DAG. |
 | `airflow_settings.yaml` | Conexiones del entorno local. Hoy no tiene secretos. |
 
