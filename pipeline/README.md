@@ -19,8 +19,8 @@ w/ config*. Los parámetros de la consulta son `starttime`, `endtime`,
 `minmagnitude`, el rectángulo `minlatitude`/`maxlatitude`/`minlongitude`/`maxlongitude`
 (por defecto Argentina continental; los cuatro en null consultan el planeta) y
 `limit` (un tope de seguridad: si el rango empareja más sismos que eso la corrida
-falla en vez de truncar; `0` es sin tope). Del método salen `mc_metodo`,
-`mainshock`, `seed` y `n_randomizaciones`. Y `force` ignora todo lo ya persistido
+falla en vez de truncar; `0` es sin tope). Del método salen `mainshock`,
+`seed` y `n_randomizaciones`. Y `force` ignora todo lo ya persistido
 y recalcula de cero.
 
 ## Estructura
@@ -29,7 +29,7 @@ y recalcula de cero.
 |---|---|
 | `dags/` | Orquestación: schedule, params, dependencias entre tareas. |
 | `include/sismos/` | La lógica importable. Se llega como `import sismos` gracias al `PYTHONPATH` del Dockerfile. |
-| `include/output/` | Salida de cada paso: `bronze/` y `silver/` con el catálogo, y `parametros/`, `vecinos/`, `umbral/`, `nulo/` y `replicas/` con lo que produce el método. Lo que depende de la semilla la lleva en el nombre. No se versiona: se regenera corriendo el DAG. |
+| `include/output/` | Salida de cada paso: `bronze/` y `silver/` con el catálogo, y `vecinos/`, `umbral/`, `nulo/`, `replicas/` y `clusters/` con lo que produce el método. Lo que depende de la semilla la lleva en el nombre. No se versiona: se regenera corriendo el DAG. |
 | `tests/dags/` | Chequeos de integridad del DAG. |
 | `airflow_settings.yaml` | Conexiones del entorno local. Hoy no tiene secretos. |
 

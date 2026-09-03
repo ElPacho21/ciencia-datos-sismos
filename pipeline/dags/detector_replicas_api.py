@@ -21,12 +21,7 @@ from airflow.sdk import Param, dag, task
 # que la función que las hace, y de otro modo una taparía a la otra.
 from sismos import clusters, replicas, vecinos
 from sismos.bronze import bronze_load, bronze_path, bronze_write
-from sismos.parametros import (
-    estimate,
-    parametros_path,
-    parametros_read,
-    parametros_write,
-)
+from sismos.parametros import estimate
 from sismos.silver import refine, silver_path, silver_read, silver_write
 from sismos.umbral import fit_threshold, umbral_path, umbral_read, umbral_write
 from sismos.usgs_earthquake import fetch
@@ -110,17 +105,6 @@ log = logging.getLogger(__name__)
             ),
             minimum=0,
             maximun=20000,
-        ),
-        "mc_metodo": Param(
-            "gft",
-            type="string",
-            enum=["gft", "maxc"],
-            title="Método para la magnitud de completitud",
-            description=(
-                "Cómo estimar Mc. 'gft' es bondad de ajuste (Wiemer & Wyss), "
-                "más exigente; 'maxc' es máxima curvatura, más permisivo y "
-                "usado como fallback cuando gft no llega al objetivo."
-            ),
         ),
         "mainshock": Param(
             "mayor",
@@ -217,45 +201,20 @@ def detector_replicas_api():
         return str(destino)
 
     @task
-    def estimate_mc_b_d(silver_ruta: str, **context) -> str:
-        params = context["params"]
-
-        destino = parametros_path(**consulta(params))
-
-        if destino.exists() and not params["force"]:
-            guardado = parametros_read(destino)
-            # A diferencia de bronze y silver, acá la partición no alcanza para
-            # decidir si sirve lo persistido: los mismos datos con otro método
-            # de Mc dan otros parámetros. Se comparan los knobs con los que se
-            # calculó y sólo se reutiliza si son los mismos.
-            if guardado.get("knobs", {}).get("mc_metodo") == params["mc_metodo"]:
-                log.info(
-                    "Se reutilizaron los parámetros ya estimados: Mc=%.2f, b=%.3f, d=%.3f.",
-                    guardado["mc"],
-                    guardado["b"],
-                    guardado["d"],
-                )
-                return str(destino)
-            log.info(
-                "Los parámetros persistidos son de otro método de Mc: se recalcula."
-            )
-
-        parametros = estimate(
-            silver_read(Path(silver_ruta)), mc_metodo=params["mc_metodo"]
-        )
-        parametros_write(destino, parametros)
-        return str(destino)
+    def estimate_mc(silver_ruta: str) -> dict:
+        """Mc del catálogo, más los b y d estándar."""
+        return estimate(silver_read(Path(silver_ruta)))
 
     @task
-    def nearest_neighbor(silver_ruta: str, parametros_ruta: str, **context) -> str:
+    def nearest_neighbor(silver_ruta: str, parametros: dict, **context) -> str:
         params = context["params"]
 
         destino = vecinos.vecinos_path(**consulta(params))
-        fuente = Path(parametros_ruta)
+        fuente = Path(silver_ruta)
 
-        # Acá no alcanza con que el archivo exista: el bosque de padres depende
-        # de Mc, b y d, que se recalculan aguas arriba. Si el json de
-        # parámetros es más nuevo que este parquet, lo que hay quedó viejo.
+        # Mc sale del propio catálogo y b y d son constantes, así que el único
+        # insumo del que depende este parquet es silver: si se refinó de nuevo,
+        # lo que hay quedó viejo.
         if (
             destino.exists()
             and not params["force"]
@@ -264,9 +223,8 @@ def detector_replicas_api():
             log.info("Se reutilizó un bosque de padres ya persistido.")
             return str(destino)
 
-        parametros = parametros_read(fuente)
         emparentados = vecinos.nearest_neighbor(
-            silver_read(Path(silver_ruta)),
+            silver_read(fuente),
             b=parametros["b"],
             d=parametros["d"],
             mc=parametros["mc"],
@@ -294,7 +252,7 @@ def detector_replicas_api():
         return str(destino)
 
     @task
-    def randomize_catalog(silver_ruta: str, parametros_ruta: str, **context) -> str:
+    def randomize_catalog(silver_ruta: str, parametros: dict, **context) -> str:
         params = context["params"]
 
         destino = replicas.nulo_path(
@@ -302,10 +260,10 @@ def detector_replicas_api():
             n_repeticiones=params["n_randomizaciones"],
             **consulta(params),
         )
-        fuente = Path(parametros_ruta)
+        fuente = Path(silver_ruta)
 
         # La semilla y las repeticiones ya están en el nombre del archivo, así
-        # que alcanza con comparar contra los parámetros de aguas arriba.
+        # que alcanza con comparar contra silver, que es el único insumo.
         if (
             destino.exists()
             and not params["force"]
@@ -314,9 +272,8 @@ def detector_replicas_api():
             log.info("Se reutilizó un catálogo nulo ya persistido.")
             return str(destino)
 
-        parametros = parametros_read(fuente)
         nulo = replicas.randomize_catalog(
-            silver_read(Path(silver_ruta)),
+            silver_read(fuente),
             b=parametros["b"],
             d=parametros["d"],
             mc=parametros["mc"],
@@ -402,13 +359,13 @@ def detector_replicas_api():
         return salida
 
     silver_ruta = refine_silver(land_bronze())
-    parametros_ruta = estimate_mc_b_d(silver_ruta)
-    vecinos_ruta = nearest_neighbor(silver_ruta, parametros_ruta)
+    parametros = estimate_mc(silver_ruta)
+    vecinos_ruta = nearest_neighbor(silver_ruta, parametros)
 
     build_clusters(
         thinning(
             vecinos_ruta,
-            randomize_catalog(silver_ruta, parametros_ruta),
+            randomize_catalog(silver_ruta, parametros),
             fit_eta_threshold(vecinos_ruta),
         )
     )

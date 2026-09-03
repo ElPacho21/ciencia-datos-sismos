@@ -108,32 +108,31 @@ así que se calcula una vez y se reutiliza aunque después cambies el método de
 Mc o el umbral. El orden cronológico es parte del contrato — el vecino más
 cercano recorre el catálogo hacia atrás y lo da por sentado.
 
-### `estimate_mc_b_d` → los tres números que el método necesita
+### `estimate_mc` → los tres números que el método necesita
 
-Acá está la parte que más se olvida: **`b` y `d` no son constantes de tabla**,
-son parámetros que hay que ajustar a *estos* datos. Y antes de poder ajustarlos
-hay que resolver un problema previo.
+De los tres, **uno solo se estima**.
 
 **Mc, la magnitud de completitud.** Un catálogo registra todos los sismos
 grandes y se le escapan los chicos: no hay sismógrafos en todos lados. Mc es la
-magnitud a partir de la cual ya no se le escapa nada. Todo lo que se calcule
-por debajo de Mc sale sesgado, porque faltan eventos. Por eso Mc va primero y
-el catálogo se recorta ahí antes de seguir.
+magnitud a partir de la cual ya no se le escapa nada. Se calcula por máxima
+curvatura: el bin más poblado de la distribución de magnitudes es donde el
+catálogo deja de crecer y empieza a perder eventos. Éste no se puede tomar de
+tabla, porque depende de qué red cubrió la zona y en qué época, y errarle sesga
+todo lo que venga después.
 
-**`b`, la pendiente de Gutenberg-Richter.** Por cada sismo de magnitud 6 hay
-como diez de magnitud 5 y cien de magnitud 4. Esa proporción es `b`, y en la
-práctica da cerca de 1 en casi todo el mundo. Sirve como control: si `b` da
-muy lejos de 1, casi siempre es que Mc quedó mal.
+**`b` y `d` se toman en sus valores estándar** (1.0 y 1.5). Son los que usa la
+literatura cuando no se los ajusta. Para `d` es incluso *más* defendible que
+ajustarlo: el ajuste por integral de correlación obliga a elegir un rango de
+escaleo, y esa elección resultó frágil — sobre California devolvía 0.9 cuando el
+valor publicado para esa región ronda 1.6.
 
-**`d`, la dimensión fractal.** Mide cuán apelotonados están los epicentros. Se
-calcula contando, para cada radio, qué fracción de todos los pares de sismos
-está más cerca que eso. Si estuvieran repartidos parejo por una superficie esa
-fracción crecería como `r²`; si estuvieran alineados sobre una falla, como `r¹`.
-Lo que da en el medio es `d`.
+Que sean constantes no invalida el método: entran en eta como una reescala, y el
+umbral que separa réplicas de fondo se ajusta después sobre la distribución de
+eta que salga. Lo que sí se pierde es poder decir que los parámetros son "de
+estos datos".
 
-Los tres salen a un JSON que guarda además las **curvas diagnósticas** (la
-distribución de magnitudes y la integral de correlación), para poder graficarlas
-y defender los números sin recalcular la parte cara.
+Es tan barato —un histograma y un argmax— que no se persiste: los tres números
+viajan por XCom hasta los pasos que los necesitan.
 
 ### `nearest_neighbor` → el bosque de padres
 
@@ -236,50 +235,41 @@ clusters.
 
 ## Una corrida de referencia
 
-Catálogo global, del 1 al 30 de agosto de 2026, magnitud mínima 2.5:
+Argentina continental, diez años (2016–2026), magnitud mínima de consulta 3.5:
 
 | | |
 |---|---|
-| Eventos en el catálogo limpio | 2169 |
-| Mc (bondad de ajuste) | 4.30, explica el 90.6% de la distribución |
-| `b` | 0.956 ± 0.028, sobre 876 eventos completos |
-| `d` | 1.756 (R² 0.9919, entre 0.7 y 65 km) |
-| Umbral | log₁₀ η₀ = −4.637 |
-| Por debajo del umbral | 367 de 875 (41.9%) |
-| Réplicas después del thinning | 375 de 876 (42.8%), semilla 1 |
-| Clusters | 501, de los cuales 429 son de un solo evento |
-| Cluster más grande | M7.7 con 193 réplicas, 12.8 días, 8 generaciones |
-| Productividad de Utsu | α = 1.338 (R² 0.915) |
+| Eventos en el catálogo limpio | 7320 |
+| Mc (máxima curvatura) | 4.50 |
+| Eventos completos, sobre Mc | 2321 |
+| `b` y `d` | 1.0 y 1.5, estándar |
+| Umbral | log₁₀ η₀ = −5.778 (modos separados 2.01 σ) |
+| Contraste con el catálogo barajado | 12.2% bajo el umbral contra 6.4% — exceso de 5.9 puntos |
+| Réplicas después del thinning | 341 de 2321 (14.7%), semilla 1 |
+| Clusters | 1980, de los cuales 126 tienen al menos una réplica |
+| Cluster más grande | 33 eventos |
+| Productividad de Utsu | α = 1.252 (R² 0.996) |
 
-Cuatro cosas que vale la pena mirar de esa corrida:
+Tres cosas que vale la pena mirar:
 
-**El contraste entre los dos métodos de Mc.** Con máxima curvatura, Mc baja a
-2.80 y `b` se desploma a **0.332**, que es físicamente imposible. Es la firma
-exacta de un Mc subestimado: al catálogo global le faltan los eventos chicos, la
-distribución se aplana y la pendiente se va al piso. Por eso el default es
-bondad de ajuste, y por eso el código avisa cuando `b` sale fuera de 0.5–2.0.
+**Máxima curvatura acertó el Mc.** Dio 4.50, y es exactamente lo que anticipaba
+mirar los conteos crudos del USGS para Argentina: la cantidad de eventos es
+prácticamente igual pidiendo M≥2.5, 3.0, 3.5 o 4.0, y recién cae en 4.5. Ese
+tramo plano no es sismología, es un catálogo al que le faltan los sismos chicos
+porque la red global no los ve — los tiene INPRES, no el USGS. Los 5000 eventos
+que quedan por debajo de Mc se descartan, y está bien que así sea.
 
-**La bimodalidad está, pero justa.** Los dos modos quedan separados 2.82
-desvíos y el modelo estima un 6.7% de error de clasificación. Pasa el piso, pero
-sin holgura: el valle es más un hombro que un pozo.
+**La productividad reproduce la ley de Utsu.** Es el único control contra un
+hecho externo, y no contra un sintético fabricado acá: el número medio de
+réplicas por bin de magnitud sube de forma limpia y el exponente cae dentro del
+rango que se observa en el mundo. Que R² dé 0.996 dice que los conteos por
+magnitud son coherentes entre sí.
 
-**El contraste con el catálogo barajado dispara la alarma.** Bajo el umbral cae
-el 41.9% del catálogo real y el 37.9% del barajado: un exceso sobre el azar de
-apenas 4.1 puntos, contra los 8.0 que da un control sintético con réplicas
-plantadas de verdad. El contraste es *conservador* por construcción —el nulo
-conserva N y por lo tanto es más denso que el fondo verdadero, lo que infla su
-proporción bajo el umbral— así que un exceso chico no prueba que no haya
-réplicas. Pero sí dice que sobre un mes de catálogo global la señal es débil, y
-es el argumento más fuerte para acotar la región.
-
-**Y el cluster más grande abarca 5464 km.** Eso no es una secuencia de réplicas:
-ninguna abarca un cuarto de la Tierra. Con 8 generaciones de profundidad, lo que
-pasó es que el M7.7 alcanzó eventos lejanos, esos alcanzaron otros más lejanos y
-el árbol terminó encadenando sismicidad de regiones sin ninguna relación. Por eso
-`build_clusters` avisa cuando un cluster se extiende más de 1500 km. Es también
-lo que explica el α = 1.338: el bin de magnitud alta lo domina ese único cluster
-inflado, así que la productividad de esta corrida no es creíble aunque el número
-caiga dentro del rango que el código considera plausible.
+**Todavía hay clusters imposibles.** Tres se extienden más de 1500 km, el mayor
+2808 km. El rectángulo de Argentina abarca 34° de latitud, casi 3800 km, así que
+un sismo grande en Jujuy puede reclamar como hijo a uno en Tierra del Fuego. Es
+el mismo problema de siempre, más chico: acotar más la región, o cortar por
+profundidad, lo seguiría reduciendo.
 
 ## Cómo se sabe que las cuentas están bien
 
@@ -287,8 +277,6 @@ Cada paso se contrastó contra un caso de respuesta conocida:
 
 | Qué | Control | Resultado |
 |---|---|---|
-| `b` | Catálogo sintético con `b` conocido | Lo recupera con 0.3–1% de error; sin la corrección de binning se va 12.6% arriba |
-| `d` | Nube uniforme en 2D, donde `d` tiene que dar 2 | 1.906 — el sesgo bajo del ~5% es propio del método, no del código |
 | Vecino más cercano | Bucle O(N²) ingenuo sobre 300 eventos | 0 padres distintos |
 | Vecino más cercano | Mismo cálculo con bloques de 7 y de 256 | Resultado idéntico |
 | Bimodalidad | Catálogo sintético **sin** réplicas plantadas | Unimodal: no inventa un segundo modo |
@@ -311,7 +299,6 @@ cortas:
 |---|---|
 | Corte por profundidad | En Argentina importa tanto como el rectángulo: la sismicidad superficial andina y la del slab profundo (100–250 km) son poblaciones distintas con estadística distinta, y mezclarlas ensucia `d` y eta. El FDSN acepta `mindepth`/`maxdepth`. |
 | El contraste con el nulo usa puntos absolutos | Argentina dio 9.8% contra 4.8% — un exceso de **2×**, que es señal — pero como en puntos absolutos son 5.0 y el umbral es 5.0, avisó igual. La corrida global dio 41.9 contra 37.9, que es 1.1× y no significa nada, y avisó lo mismo. Debería ser un cociente. |
-| El rango de escaleo de `d` se estira de más | En California ajustó hasta 1296 km, más que la extensión de California misma, o sea que entró en zona de saturación y devolvió `d = 0.900` cuando el paper reporta ~1.6 para esa región. La regla de "la ventana más ancha con R² ≥ 0.99" llega más lejos de lo que el catálogo sostiene. |
 
 ## Referencias
 

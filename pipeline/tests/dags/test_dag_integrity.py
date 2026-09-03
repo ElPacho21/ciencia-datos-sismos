@@ -25,11 +25,11 @@ CARPETA_DAGS = Path(__file__).resolve().parents[2] / "dags"
 DEPENDENCIAS = {
     "land_bronze": set(),
     "refine_silver": {"land_bronze"},
-    "estimate_mc_b_d": {"refine_silver"},
+    "estimate_mc": {"refine_silver"},
     # El vecino más cercano necesita el catálogo y además Mc, b y d.
-    "nearest_neighbor": {"refine_silver", "estimate_mc_b_d"},
+    "nearest_neighbor": {"refine_silver", "estimate_mc"},
     "fit_eta_threshold": {"nearest_neighbor"},
-    "randomize_catalog": {"refine_silver", "estimate_mc_b_d"},
+    "randomize_catalog": {"refine_silver", "estimate_mc"},
     # El thinning cruza el bosque de padres, el umbral y el catálogo nulo.
     "thinning": {"nearest_neighbor", "randomize_catalog", "fit_eta_threshold"},
     "build_clusters": {"thinning"},
@@ -76,7 +76,7 @@ def test_params_de_la_consulta(dag):
 
 def test_params_del_metodo(dag):
     """Las decisiones de método también son parámetros, no constantes."""
-    assert {"mc_metodo", "mainshock", "seed", "n_randomizaciones"} <= set(dag.params)
+    assert {"mainshock", "seed", "n_randomizaciones"} <= set(dag.params)
 
 
 def test_tareas_esperadas(dag):
