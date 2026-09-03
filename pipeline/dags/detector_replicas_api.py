@@ -98,7 +98,7 @@ log = logging.getLogger(__name__)
             maximum=180,
         ),
         "limit": Param(
-            0,
+            20000,
             type="integer",
             title="Tope de sismos a bajar",
             description=(
@@ -109,6 +109,7 @@ log = logging.getLogger(__name__)
                 "el servicio por consulta."
             ),
             minimum=0,
+            maximun=20000,
         ),
         "mc_metodo": Param(
             "gft",
@@ -171,9 +172,6 @@ log = logging.getLogger(__name__)
     },
 )
 def detector_replicas_api():
-    # Todo lo que identifica a una corrida, junto. Cada capa se lo pasa entero
-    # a su `*_path`, así que agregar un filtro nuevo a la consulta es tocar
-    # esta lista y `particion()`, y ninguna tarea más.
     def consulta(params) -> dict:
         return {
             clave: params[clave]
@@ -331,9 +329,7 @@ def detector_replicas_api():
         return str(destino)
 
     @task
-    def thinning(
-        vecinos_ruta: str, nulo_ruta: str, umbral_ruta: str, **context
-    ) -> str:
+    def thinning(vecinos_ruta: str, nulo_ruta: str, umbral_ruta: str, **context) -> str:
         params = context["params"]
 
         destino = replicas.replicas_path(seed=params["seed"], **consulta(params))
@@ -389,9 +385,7 @@ def detector_replicas_api():
             destino_eventos.exists()
             and destino_resumen.exists()
             and not params["force"]
-            and min(
-                destino_eventos.stat().st_mtime, destino_resumen.stat().st_mtime
-            )
+            and min(destino_eventos.stat().st_mtime, destino_resumen.stat().st_mtime)
             >= fuente.stat().st_mtime
         ):
             log.info("Se reutilizaron los clusters ya armados.")

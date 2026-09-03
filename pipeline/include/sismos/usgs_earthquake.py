@@ -22,16 +22,10 @@ CONN_ID = "sismosapi"
 EVENT_QUERY = "/fdsnws/event/1/query"
 EVENT_COUNT = "/fdsnws/event/1/count"
 
-# Tope duro del servicio. Se pide por debajo para dejar aire entre el conteo y
-# la descarga: el catálogo puede crecer en el medio.
-TOPE_SERVICIO = 20000
-TOPE_PEDIDO = 18000
 
-# Si una ventana de un minuto sigue sin entrar, partirla más no va a ayudar.
-VENTANA_MINIMA_SEGUNDOS = 60
-
-
-def _consulta(starttime, endtime, minmagnitude, eventtype, recorte, formato=None) -> dict:
+def _consulta(
+    starttime, endtime, minmagnitude, eventtype, recorte, formato=None
+) -> dict:
     parametros = {
         "starttime": starttime,
         "endtime": endtime,
@@ -72,11 +66,7 @@ def contar(
     timeout=60,
     retries=3,
 ) -> int:
-    """Cuántos eventos empareja la consulta, sin bajarlos.
-
-    El endpoint `count` devuelve un json de dos campos, así que preguntar sale
-    mucho más barato que descargar y contar.
-    """
+    """Cuántos eventos empareja la consulta, sin bajarlos."""
     hook = HttpHook(method="GET", http_conn_id=CONN_ID)
     respuesta = _pedir(
         hook,
@@ -88,41 +78,6 @@ def contar(
         retries,
     )
     return int(respuesta.json()["count"])
-
-
-def _partir(desde, hasta, eventtype, minmagnitude, recorte, timeout, retries) -> list:
-    """Devuelve sub-ventanas [(desde, hasta), ...] que entren en el tope.
-
-    Bisecta por tiempo en vez de repartir en partes iguales porque los sismos
-    no se reparten parejo: una secuencia de réplicas puede meter miles de
-    eventos en un par de días.
-    """
-    cantidad = contar(
-        starttime=desde.to_iso8601_string(),
-        endtime=hasta.to_iso8601_string(),
-        eventtype=eventtype,
-        minmagnitude=minmagnitude,
-        recorte=recorte,
-        timeout=timeout,
-        retries=retries,
-    )
-
-    if cantidad == 0:
-        return []
-
-    if cantidad <= TOPE_PEDIDO:
-        return [(desde, hasta)]
-
-    if (hasta - desde).total_seconds() <= VENTANA_MINIMA_SEGUNDOS:
-        raise ValueError(
-            f"Entre {desde} y {hasta} hay {cantidad} eventos y la ventana ya no "
-            f"se puede partir más. Subí `minmagnitude` para pedir menos."
-        )
-
-    medio = desde.add(seconds=(hasta - desde).total_seconds() / 2)
-    return _partir(
-        desde, medio, eventtype, minmagnitude, recorte, timeout, retries
-    ) + _partir(medio, hasta, eventtype, minmagnitude, recorte, timeout, retries)
 
 
 def fetch(
@@ -139,16 +94,6 @@ def fetch(
     timeout=60,
     retries=3,
 ) -> bytes:
-    """Baja el catálogo completo del rango pedido, partiéndolo si hace falta.
-
-    El rectángulo (`minlatitude` y compañía) lo aplica el propio servicio. Sin
-    él la consulta trae el mundo entero, que además de inútil hace que casi
-    cualquier ventana larga choque contra el tope de 20000.
-
-    `limit` no trunca: es un tope de seguridad. Si el rango empareja más
-    eventos que eso, la tarea falla en vez de bajar un catálogo recortado a
-    escondidas. `limit=0` significa sin tope.
-    """
     recorte = {
         "minlatitude": minlatitude,
         "maxlatitude": maxlatitude,
@@ -186,31 +131,20 @@ def fetch(
         )
 
     hook = HttpHook(method="GET", http_conn_id=CONN_ID)
-    ventanas = _partir(desde, hasta, eventtype, minmagnitude, recorte, timeout, retries)
 
-    pedazos = []
-    for indice, (ini, fin) in enumerate(ventanas):
-        respuesta = _pedir(
-            hook,
-            EVENT_QUERY,
-            _consulta(
-                ini.to_iso8601_string(),
-                fin.to_iso8601_string(),
-                minmagnitude,
-                eventtype,
-                recorte,
-                formato=format,
-            ),
-            timeout,
-            retries,
-        )
-        contenido = respuesta.content
+    respuesta = _pedir(
+        hook,
+        EVENT_QUERY,
+        _consulta(
+            desde,
+            hasta,
+            minmagnitude,
+            eventtype,
+            recorte,
+            formato=format,
+        ),
+        timeout,
+        retries,
+    )
 
-        # El encabezado del csv viene en cada pedazo: se conserva sólo el primero.
-        if format == "csv" and indice > 0:
-            _, _, cuerpo = contenido.partition(b"\n")
-            contenido = cuerpo
-
-        pedazos.append(contenido)
-
-    return b"".join(pedazos)
+    return respuesta.content
