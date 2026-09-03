@@ -170,6 +170,40 @@ lo arregla: la ecuación de punto fijo o es degenerada o converge igual al valor
 equivocado. El posterior de la mezcla, en cambio, recupera el 50% con 94.6% de
 precisión.
 
+### `build_clusters` → de enlaces sueltos a secuencias
+
+Quedarse con los enlaces aceptados deja un bosque: cada evento independiente es
+raíz de un árbol y las réplicas cuelgan de él, **en cadena**. Esa cadena es la
+razón de ser del paso, porque agrupar por `parent_id` cuenta sólo los hijos
+directos:
+
+```
+A (independiente)
+├── B  (réplica de A)
+│   └── D  (réplica de B, pero también del cluster de A)
+└── C  (réplica de A)
+```
+
+`groupby("parent_id")` diría "A tiene 2, B tiene 1". Lo cierto es que el cluster
+de A tiene tres réplicas y B no es sismo principal de nada. Con el decaimiento
+de Omori las cadenas largas son la norma.
+
+Recorrer el bosque sale gratis gracias al contrato de silver: como el catálogo
+está ordenado por tiempo y todo padre es anterior a su hijo, una sola pasada
+hacia adelante alcanza — al llegar a un evento, el cluster de su padre ya está
+resuelto. O(N), sin recursión.
+
+Produce dos tablas: el catálogo evento por evento con `cluster_id`,
+`generacion`, `orden_en_cluster` e `is_mainshock`, y **el resumen por cluster**,
+que es el entregable: sismo principal, magnitud, cantidad de réplicas,
+premonitores, duración y extensión.
+
+**Quién es el sismo principal** es una decisión, no un detalle. `mayor` toma el
+de mayor magnitud (lo que usan Zaliapin & Ben-Zion) y `raiz` el que disparó la
+secuencia. Difieren cuando hubo premonitores: un M4.5 abre el árbol y tres horas
+después llega el M7. En la corrida de referencia discrepan en el 4.6% de los
+clusters.
+
 ## Una corrida de referencia
 
 Catálogo global, del 1 al 30 de agosto de 2026, magnitud mínima 2.5:
@@ -183,8 +217,11 @@ Catálogo global, del 1 al 30 de agosto de 2026, magnitud mínima 2.5:
 | Umbral | log₁₀ η₀ = −4.637 |
 | Por debajo del umbral | 367 de 875 (41.9%) |
 | Réplicas después del thinning | 375 de 876 (42.8%), semilla 1 |
+| Clusters | 501, de los cuales 429 son de un solo evento |
+| Cluster más grande | M7.7 con 193 réplicas, 12.8 días, 8 generaciones |
+| Productividad de Utsu | α = 1.338 (R² 0.915) |
 
-Tres cosas que vale la pena mirar de esa corrida:
+Cuatro cosas que vale la pena mirar de esa corrida:
 
 **El contraste entre los dos métodos de Mc.** Con máxima curvatura, Mc baja a
 2.80 y `b` se desploma a **0.332**, que es físicamente imposible. Es la firma
@@ -205,6 +242,15 @@ proporción bajo el umbral— así que un exceso chico no prueba que no haya
 réplicas. Pero sí dice que sobre un mes de catálogo global la señal es débil, y
 es el argumento más fuerte para acotar la región.
 
+**Y el cluster más grande abarca 5464 km.** Eso no es una secuencia de réplicas:
+ninguna abarca un cuarto de la Tierra. Con 8 generaciones de profundidad, lo que
+pasó es que el M7.7 alcanzó eventos lejanos, esos alcanzaron otros más lejanos y
+el árbol terminó encadenando sismicidad de regiones sin ninguna relación. Por eso
+`build_clusters` avisa cuando un cluster se extiende más de 1500 km. Es también
+lo que explica el α = 1.338: el bin de magnitud alta lo domina ese único cluster
+inflado, así que la productividad de esta corrida no es creíble aunque el número
+caiga dentro del rango que el código considera plausible.
+
 ## Cómo se sabe que las cuentas están bien
 
 Cada paso se contrastó contra un caso de respuesta conocida:
@@ -221,18 +267,22 @@ Cada paso se contrastó contra un caso de respuesta conocida:
 | Thinning | Catálogo con 50% de réplicas plantadas | Marca 49.6%, precisión 94.6%, recall 93.8% |
 | Thinning | Catálogo **sin** réplicas plantadas | Marca 25.6% — pero el contraste con el nulo da 0.0 puntos de exceso y avisa que eso es azar |
 | Semilla | Cinco semillas sobre el catálogo real | Entre 375 y 390 réplicas (42.8–44.5%); con la misma semilla, idéntico |
+| Clusters | Bosque armado a mano con cadena A→B→D y un premonitor | Topología exacta: D hereda el cluster de A a través de B, y el premonitor no queda como sismo principal |
+| Clusters | Invariantes sobre el catálogo real | Los eventos por cluster suman el total, cada evento cae en exactamente un cluster, y réplicas + premonitores + 1 = tamaño |
+| Productividad | Catálogos sintéticos con α conocido | Recupera 0.7 → 0.699, 0.9 → 0.904, 1.1 → 1.105 |
 
 ## Lo que falta
 
-| Tarea | Qué haría |
-|---|---|
-| `build_clusters` | Recorrer el bosque. Agrupar por `parent_id` cuenta sólo los hijos directos, y una réplica también tiene réplicas: el sismo principal es la raíz del árbol entero. Recién ahí sale la cuenta de réplicas por sismo principal. |
+Las tareas del método están todas. Lo que queda es **acotar el catálogo a una
+región**, que no es una tarea nueva sino una decisión de método, y es el cambio
+que más mejoraría todos los números de acá:
 
-Y un pendiente que no es una tarea sino una decisión de método: **acotar el
-catálogo a una región**. Es el cambio que más mejoraría todos los números de
-acá. Un catálogo global mezcla zonas con completitudes muy distintas, y le da a
-`d` una geometría que responde a los bordes de placa y no a una ley de
-potencias.
+- `d` responde a la geometría de los bordes de placa y no a una ley de potencias.
+- Mc mezcla zonas con completitudes muy distintas.
+- El contraste con el nulo apenas supera al azar.
+- Y los árboles encadenan regiones sin relación hasta armar clusters de 5000 km.
+
+Los cuatro reparos son la misma cosa vista desde cuatro pasos distintos.
 
 ## Referencias
 

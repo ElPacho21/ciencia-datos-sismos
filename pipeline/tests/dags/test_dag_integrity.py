@@ -11,7 +11,6 @@ def test_no_import_errors():
     dagbag = DagBag(include_examples=False)
     assert not dagbag.import_errors, f"errores de import: {dagbag.import_errors}"
 
-
 def test_dag_registrado():
     dagbag = DagBag(include_examples=False)
     assert dagbag.get_dag("detector_replicas_api") is not None

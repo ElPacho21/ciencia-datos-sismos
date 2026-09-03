@@ -19,7 +19,7 @@ from airflow.sdk import Param, dag, task
 
 # Se importan los módulos enteros porque varias tareas del DAG se llaman igual
 # que la función que las hace, y de otro modo una taparía a la otra.
-from sismos import replicas, vecinos
+from sismos import clusters, replicas, vecinos
 from sismos.bronze import bronze_load, bronze_path, bronze_write
 from sismos.parametros import (
     estimate,
@@ -79,6 +79,18 @@ log = logging.getLogger(__name__)
                 "Cómo estimar Mc. 'gft' es bondad de ajuste (Wiemer & Wyss), "
                 "más exigente; 'maxc' es máxima curvatura, más permisivo y "
                 "usado como fallback cuando gft no llega al objetivo."
+            ),
+        ),
+        "mainshock": Param(
+            "mayor",
+            type="string",
+            enum=["mayor", "raiz"],
+            title="Definición de sismo principal",
+            description=(
+                "Cuál de los eventos del cluster es el sismo principal. "
+                "'mayor' es el de mayor magnitud, que es lo que usan Zaliapin & "
+                "Ben-Zion; 'raiz' es el que disparó la secuencia. Difieren "
+                "cuando hubo premonitores."
             ),
         ),
         "seed": Param(
@@ -334,10 +346,56 @@ def detector_replicas_api():
     parametros_ruta = estimate_mc_b_d(silver_ruta)
     vecinos_ruta = nearest_neighbor(silver_ruta, parametros_ruta)
 
-    thinning(
-        vecinos_ruta,
-        randomize_catalog(silver_ruta, parametros_ruta),
-        fit_eta_threshold(vecinos_ruta),
+    @task
+    def build_clusters(replicas_ruta: str, **context) -> dict[str, str]:
+        params = context["params"]
+
+        claves = {
+            "starttime": params["starttime"],
+            "endtime": params["endtime"],
+            "minmagnitude": params["minmagnitude"],
+            "seed": params["seed"],
+        }
+        destino_eventos = clusters.eventos_path(**claves)
+        destino_resumen = clusters.resumen_path(**claves)
+        fuente = Path(replicas_ruta)
+
+        salida = {"eventos": str(destino_eventos), "resumen": str(destino_resumen)}
+
+        if (
+            destino_eventos.exists()
+            and destino_resumen.exists()
+            and not params["force"]
+            and min(
+                destino_eventos.stat().st_mtime, destino_resumen.stat().st_mtime
+            )
+            >= fuente.stat().st_mtime
+        ):
+            log.info("Se reutilizaron los clusters ya armados.")
+            return salida
+
+        eventos, resumen = clusters.build_clusters(
+            replicas.replicas_read(fuente),
+            definicion_mainshock=params["mainshock"],
+        )
+        clusters.clusters_write(destino_eventos, eventos)
+        clusters.clusters_write(destino_resumen, resumen)
+
+        # No entra en el resultado: es el control que dice si los conteos son
+        # creíbles, contrastados contra una ley que no salió de estos datos.
+        log.info("Productividad: %s", clusters.productividad(resumen))
+        return salida
+
+    silver_ruta = refine_silver(land_bronze())
+    parametros_ruta = estimate_mc_b_d(silver_ruta)
+    vecinos_ruta = nearest_neighbor(silver_ruta, parametros_ruta)
+
+    build_clusters(
+        thinning(
+            vecinos_ruta,
+            randomize_catalog(silver_ruta, parametros_ruta),
+            fit_eta_threshold(vecinos_ruta),
+        )
     )
 
 

@@ -16,6 +16,24 @@ RADIO_TIERRA_KM = 6371.0
 CHUNK_DISTANCIAS = 256
 
 
+def distancias_a_punto(
+    lat_rad: np.ndarray, lon_rad: np.ndarray, lat0: float, lon0: float
+) -> np.ndarray:
+    """Haversine de un conjunto de epicentros contra uno solo, en km.
+
+    Para medir la extensión de un cluster alrededor de su sismo principal no
+    hace falta la matriz de todos contra todos: alcanza con una fila.
+    """
+    dlat = lat_rad - lat0
+    dlon = lon_rad - lon0
+
+    a = (
+        np.sin(dlat / 2) ** 2
+        + np.cos(lat0) * np.cos(lat_rad) * np.sin(dlon / 2) ** 2
+    )
+    return 2 * RADIO_TIERRA_KM * np.arcsin(np.sqrt(np.clip(a, 0.0, 1.0)))
+
+
 def distancias_epicentrales(
     lat_rad: np.ndarray, lon_rad: np.ndarray, desde: int, hasta: int
 ) -> np.ndarray:
