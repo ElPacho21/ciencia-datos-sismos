@@ -186,8 +186,6 @@ def detector_replicas_api():
             )
         }
 
-    # Las rutas viajan entre tareas como str: el XCom se serializa a JSON y un
-    # Path no sobrevive el viaje.
     @task
     def land_bronze(**context) -> str:
         params = context["params"]
