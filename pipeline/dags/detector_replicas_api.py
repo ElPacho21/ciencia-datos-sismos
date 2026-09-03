@@ -60,15 +60,55 @@ log = logging.getLogger(__name__)
             title="Magnitud mínima",
             description="Magnitud mínima de los sismos consultados.",
         ),
+        # Rectángulo por defecto: Argentina continental. El método supone un
+        # catálogo homogéneo, y el mundo entero no lo es — mezcla regiones con
+        # completitudes muy distintas y hace que los árboles de réplicas
+        # encadenen zonas sin relación. Dejar los cuatro en null vuelve a
+        # consultar el planeta completo.
+        "minlatitude": Param(
+            -55,
+            type=["number", "null"],
+            title="Latitud mínima",
+            description="Borde sur del rectángulo a consultar.",
+            minimum=-90,
+            maximum=90,
+        ),
+        "maxlatitude": Param(
+            -21,
+            type=["number", "null"],
+            title="Latitud máxima",
+            description="Borde norte del rectángulo a consultar.",
+            minimum=-90,
+            maximum=90,
+        ),
+        "minlongitude": Param(
+            -74,
+            type=["number", "null"],
+            title="Longitud mínima",
+            description="Borde oeste del rectángulo a consultar.",
+            minimum=-180,
+            maximum=180,
+        ),
+        "maxlongitude": Param(
+            -53,
+            type=["number", "null"],
+            title="Longitud máxima",
+            description="Borde este del rectángulo a consultar.",
+            minimum=-180,
+            maximum=180,
+        ),
         "limit": Param(
-            20000,
+            0,
             type="integer",
-            title="Cantidad de sismos límite",
+            title="Tope de sismos a bajar",
             description=(
-                "Indica el límite de la cantidad de sismos a obtener entre las fechas dadas. De 0 hasta 20000"
+                "Tope de seguridad, no un recorte: si el rango empareja más "
+                "sismos que esto, la corrida falla en vez de bajar un catálogo "
+                "truncado. 0 significa sin tope — se baja la ventana completa, "
+                "partiéndola en varios pedidos si supera los 20000 que admite "
+                "el servicio por consulta."
             ),
             minimum=0,
-            maximum=20000,
         ),
         "mc_metodo": Param(
             "gft",
@@ -131,25 +171,36 @@ log = logging.getLogger(__name__)
     },
 )
 def detector_replicas_api():
+    # Todo lo que identifica a una corrida, junto. Cada capa se lo pasa entero
+    # a su `*_path`, así que agregar un filtro nuevo a la consulta es tocar
+    # esta lista y `particion()`, y ninguna tarea más.
+    def consulta(params) -> dict:
+        return {
+            clave: params[clave]
+            for clave in (
+                "starttime",
+                "endtime",
+                "minmagnitude",
+                "minlatitude",
+                "maxlatitude",
+                "minlongitude",
+                "maxlongitude",
+            )
+        }
+
     # Las rutas viajan entre tareas como str: el XCom se serializa a JSON y un
     # Path no sobrevive el viaje.
     @task
     def land_bronze(**context) -> str:
         params = context["params"]
 
-        starttime = params["starttime"]
-        endtime = params["endtime"]
-        minmagnitude = params["minmagnitude"]
-
-        destino = bronze_path(
-            starttime=starttime, endtime=endtime, minmagnitude=minmagnitude
-        )
+        destino = bronze_path(**consulta(params))
 
         if destino.exists() and not params["force"]:
             log.info("Se reutilizó un csv ya persistido.")
             return str(destino)
 
-        csv = fetch(starttime=starttime, endtime=endtime, minmagnitude=minmagnitude)
+        csv = fetch(limit=params["limit"], **consulta(params))
         bronze_write(destino, csv)
         log.info("Se bajó el csv de la API a %s.", destino)
         return str(destino)
@@ -158,11 +209,7 @@ def detector_replicas_api():
     def refine_silver(bronze_ruta: str, **context) -> str:
         params = context["params"]
 
-        destino = silver_path(
-            starttime=params["starttime"],
-            endtime=params["endtime"],
-            minmagnitude=params["minmagnitude"],
-        )
+        destino = silver_path(**consulta(params))
 
         if destino.exists() and not params["force"]:
             log.info("Se reutilizó un parquet de silver ya persistido.")
@@ -177,11 +224,7 @@ def detector_replicas_api():
     def estimate_mc_b_d(silver_ruta: str, **context) -> str:
         params = context["params"]
 
-        destino = parametros_path(
-            starttime=params["starttime"],
-            endtime=params["endtime"],
-            minmagnitude=params["minmagnitude"],
-        )
+        destino = parametros_path(**consulta(params))
 
         if destino.exists() and not params["force"]:
             guardado = parametros_read(destino)
@@ -211,11 +254,7 @@ def detector_replicas_api():
     def nearest_neighbor(silver_ruta: str, parametros_ruta: str, **context) -> str:
         params = context["params"]
 
-        destino = vecinos.vecinos_path(
-            starttime=params["starttime"],
-            endtime=params["endtime"],
-            minmagnitude=params["minmagnitude"],
-        )
+        destino = vecinos.vecinos_path(**consulta(params))
         fuente = Path(parametros_ruta)
 
         # Acá no alcanza con que el archivo exista: el bosque de padres depende
@@ -243,11 +282,7 @@ def detector_replicas_api():
     def fit_eta_threshold(vecinos_ruta: str, **context) -> str:
         params = context["params"]
 
-        destino = umbral_path(
-            starttime=params["starttime"],
-            endtime=params["endtime"],
-            minmagnitude=params["minmagnitude"],
-        )
+        destino = umbral_path(**consulta(params))
         fuente = Path(vecinos_ruta)
 
         if (
@@ -267,11 +302,9 @@ def detector_replicas_api():
         params = context["params"]
 
         destino = replicas.nulo_path(
-            starttime=params["starttime"],
-            endtime=params["endtime"],
-            minmagnitude=params["minmagnitude"],
             seed=params["seed"],
             n_repeticiones=params["n_randomizaciones"],
+            **consulta(params),
         )
         fuente = Path(parametros_ruta)
 
@@ -303,12 +336,7 @@ def detector_replicas_api():
     ) -> str:
         params = context["params"]
 
-        destino = replicas.replicas_path(
-            starttime=params["starttime"],
-            endtime=params["endtime"],
-            minmagnitude=params["minmagnitude"],
-            seed=params["seed"],
-        )
+        destino = replicas.replicas_path(seed=params["seed"], **consulta(params))
         fuentes = [Path(vecinos_ruta), Path(nulo_ruta), Path(umbral_ruta)]
 
         if (
@@ -350,12 +378,7 @@ def detector_replicas_api():
     def build_clusters(replicas_ruta: str, **context) -> dict[str, str]:
         params = context["params"]
 
-        claves = {
-            "starttime": params["starttime"],
-            "endtime": params["endtime"],
-            "minmagnitude": params["minmagnitude"],
-            "seed": params["seed"],
-        }
+        claves = {"seed": params["seed"], **consulta(params)}
         destino_eventos = clusters.eventos_path(**claves)
         destino_resumen = clusters.resumen_path(**claves)
         fuente = Path(replicas_ruta)

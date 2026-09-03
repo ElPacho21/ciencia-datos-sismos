@@ -57,19 +57,17 @@ REPLICAS_DIR = OUTPUT_DIR / "replicas"
 EXCESO_MINIMO = 0.05
 
 
-def nulo_path(starttime, endtime, minmagnitude, seed, n_repeticiones) -> Path:
+def nulo_path(seed, n_repeticiones, **consulta) -> Path:
     """El nulo depende de la semilla y de cuántas veces se barajó.
 
     Los dos van en el nombre y no adentro del archivo: así dos corridas con
     distinta semilla conviven en disco y se ve de un vistazo cuál es cuál.
     """
-    base = particion(starttime, endtime, minmagnitude)
-    return NULO_DIR / f"{base}_seed={seed}_reps={n_repeticiones}.parquet"
+    return NULO_DIR / f"{particion(**consulta)}_seed={seed}_reps={n_repeticiones}.parquet"
 
 
-def replicas_path(starttime, endtime, minmagnitude, seed) -> Path:
-    base = particion(starttime, endtime, minmagnitude)
-    return REPLICAS_DIR / f"{base}_seed={seed}.parquet"
+def replicas_path(seed, **consulta) -> Path:
+    return REPLICAS_DIR / f"{particion(**consulta)}_seed={seed}.parquet"
 
 
 def nulo_write(destino: Path, df: pd.DataFrame) -> None:

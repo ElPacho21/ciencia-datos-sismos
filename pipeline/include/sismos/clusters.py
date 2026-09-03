@@ -48,16 +48,14 @@ ALPHA_PLAUSIBLE = (0.5, 1.5)
 EXTENSION_MAXIMA_KM = 1500.0
 
 
-def eventos_path(starttime, endtime, minmagnitude, seed) -> Path:
+def eventos_path(seed, **consulta) -> Path:
     """El catálogo evento por evento, con a qué cluster pertenece cada uno."""
-    base = particion(starttime, endtime, minmagnitude)
-    return CLUSTERS_DIR / f"eventos_{base}_seed={seed}.parquet"
+    return CLUSTERS_DIR / f"eventos_{particion(**consulta)}_seed={seed}.parquet"
 
 
-def resumen_path(starttime, endtime, minmagnitude, seed) -> Path:
+def resumen_path(seed, **consulta) -> Path:
     """Una fila por cluster: el entregable del pipeline."""
-    base = particion(starttime, endtime, minmagnitude)
-    return CLUSTERS_DIR / f"resumen_{base}_seed={seed}.parquet"
+    return CLUSTERS_DIR / f"resumen_{particion(**consulta)}_seed={seed}.parquet"
 
 
 def clusters_write(destino: Path, df: pd.DataFrame) -> None:

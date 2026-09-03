@@ -51,8 +51,8 @@ R_MINIMO_KM = 0.01
 COLUMNAS_ARRASTRADAS = ("id", "time", "latitude", "longitude", "depth", "mag")
 
 
-def vecinos_path(starttime, endtime, minmagnitude) -> Path:
-    return VECINOS_DIR / f"{particion(starttime, endtime, minmagnitude)}.parquet"
+def vecinos_path(**consulta) -> Path:
+    return VECINOS_DIR / f"{particion(**consulta)}.parquet"
 
 
 def vecinos_write(destino: Path, df: pd.DataFrame) -> None:

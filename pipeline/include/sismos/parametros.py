@@ -58,13 +58,13 @@ def recortar_a_mc(
     return sismos[binneadas * bin_magnitud >= mc - bin_magnitud / 4]
 
 
-def parametros_path(starttime, endtime, minmagnitude) -> Path:
+def parametros_path(**consulta) -> Path:
     """Misma partición que bronze y silver, pero en json.
 
     Es un puñado de números y dos curvas: no justifica parquet, y en json se
     puede abrir a mano para pegarlo en el informe.
     """
-    return PARAMETROS_DIR / f"{particion(starttime, endtime, minmagnitude)}.json"
+    return PARAMETROS_DIR / f"{particion(**consulta)}.json"
 
 
 def parametros_write(destino: Path, parametros: dict) -> None:

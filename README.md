@@ -68,6 +68,36 @@ código**: la API se cae, cambia, tarda. Si el CSV ya está en disco no se vuelv
 a pedir, así que se puede iterar sobre el resto del pipeline sin castigar al
 USGS.
 
+**El tope de 20000 del servicio.** El FDSN rechaza con HTTP 400 cualquier
+consulta que empareje más de 20000 eventos. Pasarle su parámetro `limit` evita
+el error, pero es peor: como ordena por tiempo descendente, devolvería los 20000
+más recientes y el CSV cubriría una ventana más corta que la pedida sin decirlo
+— el `starttime` del nombre del archivo estaría mintiendo y Mc, `b` y `d`
+saldrían sobre un catálogo recortado a escondidas. Así que `fetch` pregunta
+primero cuántos eventos hay y, si no entran, **parte el rango de fechas por la
+mitad** hasta que cada pedido entre. Bisecta en vez de repartir en partes
+iguales porque los sismos no se distribuyen parejo en el tiempo: una secuencia
+de réplicas mete miles de eventos en un par de días.
+
+El `limit` del DAG es otra cosa: un tope de seguridad. Si el rango empareja más
+que eso, la corrida falla en vez de bajar un catálogo truncado. `0` es sin tope.
+
+**El recorte a una región.** La consulta lleva un rectángulo
+(`minlatitude`/`maxlatitude`/`minlongitude`/`maxlongitude`), que por defecto es
+Argentina continental y lo aplica el propio servicio — filtrar después de bajar
+sería pedir el mundo entero para tirar el 99%, y encima chocaría con el tope de
+20000. Dejar los cuatro en null vuelve a consultar el planeta.
+
+Es la decisión que más cambia los resultados, y no por gusto: el método supone
+un catálogo homogéneo. El mundo entero mezcla regiones con completitudes muy
+distintas, le da a `d` una geometría que responde a los bordes de placa y no a
+una ley de potencias, y hace que los árboles de réplicas encadenen zonas sin
+relación hasta armar clusters de 5000 km.
+
+El rectángulo entra en el nombre de archivo de **todas** las capas, vía
+`particion()`. Sin eso dos regiones distintas se pisarían el mismo `bronze` y
+`silver`, y estarías analizando Argentina creyendo que es California.
+
 ### `refine_silver` → el catálogo limpio
 
 Parsea fechas y números, tira las filas sin magnitud o sin epicentro, saca
@@ -273,16 +303,15 @@ Cada paso se contrastó contra un caso de respuesta conocida:
 
 ## Lo que falta
 
-Las tareas del método están todas. Lo que queda es **acotar el catálogo a una
-región**, que no es una tarea nueva sino una decisión de método, y es el cambio
-que más mejoraría todos los números de acá:
+Las tareas del método están todas, y el catálogo ya se consulta acotado a un
+rectángulo. Lo que queda es afinar ese recorte y dos guardas que se quedaron
+cortas:
 
-- `d` responde a la geometría de los bordes de placa y no a una ley de potencias.
-- Mc mezcla zonas con completitudes muy distintas.
-- El contraste con el nulo apenas supera al azar.
-- Y los árboles encadenan regiones sin relación hasta armar clusters de 5000 km.
-
-Los cuatro reparos son la misma cosa vista desde cuatro pasos distintos.
+| Pendiente | Qué pasa |
+|---|---|
+| Corte por profundidad | En Argentina importa tanto como el rectángulo: la sismicidad superficial andina y la del slab profundo (100–250 km) son poblaciones distintas con estadística distinta, y mezclarlas ensucia `d` y eta. El FDSN acepta `mindepth`/`maxdepth`. |
+| El contraste con el nulo usa puntos absolutos | Argentina dio 9.8% contra 4.8% — un exceso de **2×**, que es señal — pero como en puntos absolutos son 5.0 y el umbral es 5.0, avisó igual. La corrida global dio 41.9 contra 37.9, que es 1.1× y no significa nada, y avisó lo mismo. Debería ser un cociente. |
+| El rango de escaleo de `d` se estira de más | En California ajustó hasta 1296 km, más que la extensión de California misma, o sea que entró en zona de saturación y devolvió `d = 0.900` cuando el paper reporta ~1.6 para esa región. La regla de "la ventana más ancha con R² ≥ 0.99" llega más lejos de lo que el catálogo sostiene. |
 
 ## Referencias
 

@@ -41,8 +41,8 @@ SEPARACION_MINIMA = 1.5
 PESO_MINIMO = 0.05
 
 
-def umbral_path(starttime, endtime, minmagnitude) -> Path:
-    return UMBRAL_DIR / f"{particion(starttime, endtime, minmagnitude)}.json"
+def umbral_path(**consulta) -> Path:
+    return UMBRAL_DIR / f"{particion(**consulta)}.json"
 
 
 def umbral_write(destino: Path, umbral: dict) -> None:

@@ -15,9 +15,13 @@ sola desde `airflow_settings.yaml`, así que el DAG se puede disparar sin tocar
 nada más.
 
 `detector_replicas_api` no tiene schedule: se dispara a mano con *Trigger DAG
-w/ config*. Los parámetros de la consulta son `starttime`, `endtime`, `limit` y
-`minmagnitude`; `mc_metodo` elige cómo estimar la magnitud de completitud y
-`force` ignora todo lo ya persistido y recalcula de cero.
+w/ config*. Los parámetros de la consulta son `starttime`, `endtime`,
+`minmagnitude`, el rectángulo `minlatitude`/`maxlatitude`/`minlongitude`/`maxlongitude`
+(por defecto Argentina continental; los cuatro en null consultan el planeta) y
+`limit` (un tope de seguridad: si el rango empareja más sismos que eso la corrida
+falla en vez de truncar; `0` es sin tope). Del método salen `mc_metodo`,
+`mainshock`, `seed` y `n_randomizaciones`. Y `force` ignora todo lo ya persistido
+y recalcula de cero.
 
 ## Estructura
 

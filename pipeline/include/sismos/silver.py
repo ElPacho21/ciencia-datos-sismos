@@ -66,7 +66,7 @@ COLUMNAS_SILVER = (
 )
 
 
-def silver_path(starttime, endtime, minmagnitude) -> Path:
+def silver_path(**consulta) -> Path:
     """Misma partición que bronze, pero en parquet.
 
     Parquet y no csv porque silver ya está tipado: el paso del vecino más
@@ -74,7 +74,7 @@ def silver_path(starttime, endtime, minmagnitude) -> Path:
     tiene por qué volver a parsear ni arriesgarse a que pandas infiera otra
     cosa.
     """
-    return SILVER_DIR / f"{particion(starttime, endtime, minmagnitude)}.parquet"
+    return SILVER_DIR / f"{particion(**consulta)}.parquet"
 
 
 def refine(crudo: pd.DataFrame) -> pd.DataFrame:
