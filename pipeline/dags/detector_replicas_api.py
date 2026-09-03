@@ -104,7 +104,7 @@ log = logging.getLogger(__name__)
                 "el servicio por consulta."
             ),
             minimum=0,
-            maximun=20000,
+            maximum=20000,
         ),
         "mainshock": Param(
             "mayor",
