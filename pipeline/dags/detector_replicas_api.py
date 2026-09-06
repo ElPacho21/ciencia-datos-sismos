@@ -212,9 +212,6 @@ def detector_replicas_api():
         destino = vecinos.vecinos_path(**consulta(params))
         fuente = Path(silver_ruta)
 
-        # Mc sale del propio catálogo y b y d son constantes, así que el único
-        # insumo del que depende este parquet es silver: si se refinó de nuevo,
-        # lo que hay quedó viejo.
         if (
             destino.exists()
             and not params["force"]

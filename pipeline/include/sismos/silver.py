@@ -96,18 +96,8 @@ def refine(crudo: pd.DataFrame) -> pd.DataFrame:
 
     entraron = len(df)
 
-    # La API ya filtra por eventtype, pero el csv de bronze puede venir de una
-    # corrida vieja hecha con otros parámetros.
-    df = df[df["type"] == "earthquake"]
-
     df = df.dropna(subset=list(COLUMNAS_SIN_NULOS))
-
-    # Un mismo evento puede repetirse si la red lo revisó: nos quedamos con la
-    # revisión más nueva.
     df = df.sort_values("updated").drop_duplicates("id", keep="last")
-
-    # El vecino más cercano recorre el catálogo hacia atrás en el tiempo, así
-    # que el orden cronológico es parte del contrato de silver.
     df = df.sort_values("time").reset_index(drop=True)
 
     log.info(

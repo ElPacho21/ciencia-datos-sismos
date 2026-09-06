@@ -120,10 +120,6 @@ def nearest_neighbor(
 
         distancias = distancias_epicentrales(lat_rad, lon_rad, desde, hasta)
         dt = tiempos[desde:hasta, None] - tiempos[None, :]
-
-        # Sólo son padres candidatos los estrictamente anteriores. El `> 0`
-        # descarta de paso al propio evento y a los que comparten timestamp,
-        # que darían t = 0 y por lo tanto eta = 0.
         anteriores = dt > 0
 
         r = np.maximum(distancias, r_minimo_km)
