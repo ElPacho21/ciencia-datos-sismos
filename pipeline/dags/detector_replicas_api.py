@@ -45,19 +45,21 @@ log = logging.getLogger(__name__)
     doc_md=__doc__,
     params={
         "starttime": Param(
+            "2016-01-01",
             type="string",
             format="date",
             title="Fecha de inicio",
             description=("Fecha a partir de la cual obtener registros de sismos."),
         ),
         "endtime": Param(
+            "2026-01-01",
             type="string",
             format="date",
             title="Fecha de fin",
             description=("Fecha hasta la cual obtener registros de sismos."),
         ),
         "minmagnitude": Param(
-            0,
+            3.5,
             type="number",
             title="Magnitud mínima",
             description="Magnitud mínima de los sismos consultados.",
@@ -126,7 +128,7 @@ log = logging.getLogger(__name__)
             ),
         ),
         "seed": Param(
-            0,
+            1,
             type="integer",
             title="Semilla",
             description=(
