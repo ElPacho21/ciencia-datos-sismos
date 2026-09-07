@@ -33,6 +33,9 @@ DEPENDENCIAS = {
     # El thinning cruza el bosque de padres, el umbral y el catálogo nulo.
     "thinning": {"nearest_neighbor", "randomize_catalog", "fit_eta_threshold"},
     "build_clusters": {"thinning"},
+    # La entrega es el último paso y no alimenta a nadie: escribe el csv y lo
+    # valida.
+    "publish_csv": {"build_clusters"},
 }
 
 
@@ -88,7 +91,7 @@ def test_dependencias(dag, tarea):
     assert dag.get_task(tarea).upstream_task_ids == DEPENDENCIAS[tarea]
 
 
-def test_el_pipeline_termina_en_los_clusters(dag):
+def test_el_pipeline_termina_en_la_entrega(dag):
     """Ninguna tarea queda colgada sin alimentar a nadie salvo la última."""
     hojas = sorted(t.task_id for t in dag.tasks if not t.downstream_task_ids)
-    assert hojas == ["build_clusters"], f"el pipeline termina en {hojas}"
+    assert hojas == ["publish_csv"], f"el pipeline termina en {hojas}"

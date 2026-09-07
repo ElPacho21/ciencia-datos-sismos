@@ -13,14 +13,21 @@ Los pedazos se concatenan. Un evento justo en el borde entre dos sub-ventanas
 puede venir repetido, pero silver deduplica por `id`, así que no hace daño.
 """
 
+import logging
 import time
 
 import pendulum
 from airflow.providers.http.hooks.http import HttpHook
 
+log = logging.getLogger(__name__)
+
 CONN_ID = "sismosapi"
 EVENT_QUERY = "/fdsnws/event/1/query"
 EVENT_COUNT = "/fdsnws/event/1/count"
+
+# Lo que el servicio admite por consulta. Más que esto no lo trunca: lo rechaza
+# con HTTP 400, así que hay que partir el pedido en varios.
+TOPE_SERVICIO = 20000
 
 
 def _consulta(
@@ -80,6 +87,86 @@ def contar(
     return int(respuesta.json()["count"])
 
 
+def _concatenar(pedazos: list[bytes]) -> bytes:
+    """Pega varios csv en uno, dejando una sola cabecera.
+
+    Cada respuesta del servicio trae la suya, así que las de los pedazos que no
+    son el primero hay que sacarlas: si no, quedarían filas con la palabra
+    'time' en el medio del archivo y silver las convertiría en nulos.
+    """
+    if len(pedazos) == 1:
+        return pedazos[0]
+
+    salida = [pedazos[0].rstrip(b"\n")]
+    for pedazo in pedazos[1:]:
+        cuerpo = pedazo.split(b"\n", 1)
+        if len(cuerpo) == 2 and cuerpo[1].strip():
+            salida.append(cuerpo[1].rstrip(b"\n"))
+
+    return b"\n".join(salida) + b"\n"
+
+
+def _bajar(
+    hook, desde, hasta, total, consulta_base, recorte, timeout, retries
+) -> list[bytes]:
+    """Baja el rango, partiéndolo por la mitad mientras no entre en una consulta.
+
+    Se bisecta en vez de repartir en partes iguales porque los sismos no se
+    distribuyen parejo en el tiempo: una secuencia de réplicas mete miles de
+    eventos en un par de días, y un reparto uniforme dejaría ese pedazo igual de
+    grande que el original. Cortando por la mitad y volviendo a contar, la
+    partición se adapta a dónde está la densidad.
+
+    `total` viene contado por quien llama, así que cada nivel de la recursión
+    cuesta **una** consulta al endpoint de conteo, no dos.
+    """
+    if total <= TOPE_SERVICIO:
+        respuesta = _pedir(
+            hook,
+            EVENT_QUERY,
+            {**consulta_base, "starttime": desde, "endtime": hasta},
+            timeout,
+            retries,
+        )
+        return [respuesta.content]
+
+    medio = desde + (hasta - desde) / 2
+
+    # Si la ventana ya no se puede partir, el problema no tiene salida por acá:
+    # hay más de 20000 eventos en un instante. Pasa sólo con rangos absurdos.
+    if not desde < medio < hasta:
+        raise ValueError(
+            f"El rango {desde} a {hasta} empareja {total} sismos y ya no se "
+            f"puede partir más. Subí `minmagnitude` o achicá la región."
+        )
+
+    total_izquierda = contar(
+        starttime=desde,
+        endtime=medio,
+        eventtype=consulta_base["eventtype"],
+        minmagnitude=consulta_base["minmagnitude"],
+        recorte=recorte,
+        timeout=timeout,
+        retries=retries,
+    )
+
+    # Un evento justo en el borde puede caer en las dos mitades. No se corrige
+    # acá: silver deduplica por `id`, y correr el borde un microsegundo abriría
+    # la puerta a perder eventos, que es el error caro.
+    return _bajar(
+        hook, desde, medio, total_izquierda, consulta_base, recorte, timeout, retries
+    ) + _bajar(
+        hook,
+        medio,
+        hasta,
+        total - total_izquierda,
+        consulta_base,
+        recorte,
+        timeout,
+        retries,
+    )
+
+
 def fetch(
     starttime,
     endtime,
@@ -132,19 +219,24 @@ def fetch(
 
     hook = HttpHook(method="GET", http_conn_id=CONN_ID)
 
-    respuesta = _pedir(
-        hook,
-        EVENT_QUERY,
-        _consulta(
-            desde,
-            hasta,
-            minmagnitude,
-            eventtype,
-            recorte,
-            formato=format,
-        ),
-        timeout,
-        retries,
+    # La consulta sin el rango de fechas: es lo único que cambia entre pedazos.
+    consulta_base = _consulta(
+        None, None, minmagnitude, eventtype, recorte, formato=format
+    )
+    consulta_base.pop("starttime")
+    consulta_base.pop("endtime")
+
+    pedazos = _bajar(
+        hook, desde, hasta, total, consulta_base, recorte, timeout, retries
     )
 
-    return respuesta.content
+    if len(pedazos) > 1:
+        log.info(
+            "El rango empareja %d sismos, más de los %d que admite el servicio "
+            "por consulta: se bajó en %d pedidos.",
+            total,
+            TOPE_SERVICIO,
+            len(pedazos),
+        )
+
+    return _concatenar(pedazos)

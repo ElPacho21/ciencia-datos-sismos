@@ -5,8 +5,15 @@ comprimido y particionado por parámetros de consulta) y después refina a
 silver. Se dispara a mano porque los parámetros de la ventana los elige quien
 lo corre.
 
-EN CONSTRUCCIÓN: ya están Mc, b, d, el bosque de padres, el umbral eta y el
-thinning probabilístico; falta armar los clusters y contar las réplicas.
+De ahí en adelante corre el método de Zaliapin & Ben-Zion: estima Mc, tiende el
+bosque de padres por vecino más cercano, ajusta el umbral eta contra un
+catálogo barajado, sortea las réplicas por thinning y arma los clusters. La
+última tarea publica el csv y lo valida.
+
+Una fila del entregable es **una secuencia sísmica**: un sismo principal con
+todas sus réplicas. La clave es `cluster_id` y la columna objetivo,
+`n_replicas`. Se publica además el catálogo evento por evento, donde una fila
+es un terremoto y el objetivo es `is_aftershock`.
 """
 
 from __future__ import annotations
@@ -19,7 +26,7 @@ from airflow.sdk import Param, dag, task
 
 # Se importan los módulos enteros porque varias tareas del DAG se llaman igual
 # que la función que las hace, y de otro modo una taparía a la otra.
-from sismos import clusters, replicas, vecinos
+from sismos import clusters, entrega, replicas, vecinos
 from sismos.bronze import bronze_load, bronze_path, bronze_write
 from sismos.parametros import estimate
 from sismos.silver import refine, silver_path, silver_read, silver_write
@@ -318,10 +325,6 @@ def detector_replicas_api():
         log.info("Thinning: %s | contraste con el nulo: %s", diagnostico, contraste)
         return str(destino)
 
-    silver_ruta = refine_silver(land_bronze())
-    parametros_ruta = estimate_mc_b_d(silver_ruta)
-    vecinos_ruta = nearest_neighbor(silver_ruta, parametros_ruta)
-
     @task
     def build_clusters(replicas_ruta: str, **context) -> dict[str, str]:
         params = context["params"]
@@ -355,15 +358,48 @@ def detector_replicas_api():
         log.info("Productividad: %s", clusters.productividad(resumen))
         return salida
 
+    @task
+    def publish_csv(clusters_rutas: dict[str, str], **context) -> dict[str, str]:
+        """El entregable: los dos csv, y el chequeo de calidad sobre ellos.
+
+        Es la única tarea que escribe csv. Las anteriores usan parquet porque se
+        leen entre sí y ya vienen tipadas; ésta escribe el formato que se abre a
+        mano para mirarlo y defenderlo.
+
+        Y valida antes de dar la corrida por buena: si la clave repite, si
+        quedaron menos filas de las que hacen falta o si alguna columna quedó
+        entera en nulo, la tarea falla. Un dataset roto que se publica en verde
+        es peor que una corrida en rojo, porque el error aparece recién cuando
+        alguien ya construyó algo encima.
+        """
+        params = context["params"]
+        claves = {"seed": params["seed"], **consulta(params)}
+
+        destinos = {
+            "dataset": str(entrega.dataset_path(**claves)),
+            "eventos": str(entrega.eventos_path(**claves)),
+        }
+
+        informe = entrega.publicar(
+            clusters.clusters_read(Path(clusters_rutas["eventos"])),
+            clusters.clusters_read(Path(clusters_rutas["resumen"])),
+            destinos,
+        )
+
+        log.info("Dataset publicado en %s | calidad: %s", destinos["dataset"], informe)
+        return destinos
+
     silver_ruta = refine_silver(land_bronze())
     parametros = estimate_mc(silver_ruta)
     vecinos_ruta = nearest_neighbor(silver_ruta, parametros)
 
-    build_clusters(
-        thinning(
-            vecinos_ruta,
-            randomize_catalog(silver_ruta, parametros),
-            fit_eta_threshold(vecinos_ruta),
+    publish_csv(
+        build_clusters(
+            thinning(
+                vecinos_ruta,
+                randomize_catalog(silver_ruta, parametros),
+                fit_eta_threshold(vecinos_ruta),
+            )
         )
     )
 

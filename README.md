@@ -233,9 +233,33 @@ secuencia. Difieren cuando hubo premonitores: un M4.5 abre el árbol y tres hora
 después llega el M7. En la corrida de referencia discrepan en el 4.6% de los
 clusters.
 
+### `publish_csv` → el entregable, y dudar de él
+
+Las capas anteriores escriben parquet: se leen entre tareas y ya vienen
+tipadas. Ésta escribe **csv**, que es el formato que se abre con doble clic
+para mirarlo y discutirlo.
+
+Publica dos tablas, que son las dos unidades de análisis posibles del proyecto:
+
+| Archivo | Una fila es | Clave | Objetivo |
+|---|---|---|---|
+| `clusters_*.csv` | una **secuencia sísmica**: un sismo principal con todas sus réplicas | `cluster_id` | `n_replicas` |
+| `eventos_*.csv` | un **terremoto**, con a qué secuencia cayó | `id` | `is_aftershock` |
+
+Y valida antes de dar la corrida por buena: si la clave repite, si quedaron
+menos de 1000 filas o si alguna columna quedó entera en nulo, **la tarea
+falla**. Un dataset roto publicado en verde es peor que una corrida en rojo,
+porque el error aparece recién cuando alguien ya construyó algo encima.
+
+Los nulos no se penalizan —un dataset real los tiene— pero sí se reportan: el
+log deja la proporción de nulos por columna y el conteo de tipos, que son los
+números que hay que tener a mano.
+
 ## Una corrida de referencia
 
-Argentina continental, diez años (2016–2026), magnitud mínima de consulta 3.5:
+Argentina continental, diez años (`starttime` 2016-01-01, `endtime` 2026-01-01),
+`minmagnitude` 3.5, `seed` 1, `n_randomizaciones` 5. Es la corrida que hay que
+poder repetir: con estos parámetros salen exactamente estos números.
 
 | | |
 |---|---|
@@ -243,12 +267,14 @@ Argentina continental, diez años (2016–2026), magnitud mínima de consulta 3.
 | Mc (máxima curvatura) | 4.50 |
 | Eventos completos, sobre Mc | 2321 |
 | `b` y `d` | 1.0 y 1.5, estándar |
-| Umbral | log₁₀ η₀ = −5.778 (modos separados 2.01 σ) |
-| Contraste con el catálogo barajado | 12.2% bajo el umbral contra 6.4% — exceso de 5.9 puntos |
-| Réplicas después del thinning | 341 de 2321 (14.7%), semilla 1 |
-| Clusters | 1980, de los cuales 126 tienen al menos una réplica |
-| Cluster más grande | 33 eventos |
-| Productividad de Utsu | α = 1.252 (R² 0.996) |
+| Umbral | log₁₀ η₀ = −5.778 (modos separados 2.01 σ, error esperado 4.6%) |
+| Contraste con el catálogo barajado | 12.2% bajo el umbral contra 6.2% — exceso de 6.0 puntos |
+| Réplicas después del thinning | 343 de 2321 (14.8%) |
+| Clusters | 1978, de los cuales 131 tienen al menos una réplica |
+| Cluster más grande | 32 réplicas |
+| Raíz ≠ sismo principal | 42 clusters (2.1%), o sea secuencias con premonitores |
+| Productividad de Utsu | α = 1.227 (R² 0.991) sobre 5 bins |
+| Entregable | 1978 filas × 14 columnas, sin nulos y sin claves repetidas |
 
 Tres cosas que vale la pena mirar:
 
@@ -265,11 +291,12 @@ réplicas por bin de magnitud sube de forma limpia y el exponente cae dentro del
 rango que se observa en el mundo. Que R² dé 0.996 dice que los conteos por
 magnitud son coherentes entre sí.
 
-**Todavía hay clusters imposibles.** Tres se extienden más de 1500 km, el mayor
-2808 km. El rectángulo de Argentina abarca 34° de latitud, casi 3800 km, así que
+**Todavía hay clusters imposibles.** Dos se extienden más de 1500 km, el mayor
+3610 km. El rectángulo de Argentina abarca 34° de latitud, casi 3800 km, así que
 un sismo grande en Jujuy puede reclamar como hijo a uno en Tierra del Fuego. Es
 el mismo problema de siempre, más chico: acotar más la región, o cortar por
-profundidad, lo seguiría reduciendo.
+profundidad, lo seguiría reduciendo. El pipeline no los esconde: los cuenta y
+avisa por log.
 
 ## Cómo se sabe que las cuentas están bien
 
@@ -298,6 +325,7 @@ cortas:
 | Pendiente | Qué pasa |
 |---|---|
 | Corte por profundidad | En Argentina importa tanto como el rectángulo: la sismicidad superficial andina y la del slab profundo (100–250 km) son poblaciones distintas con estadística distinta, y mezclarlas ensucia `d` y eta. El FDSN acepta `mindepth`/`maxdepth`. |
+| `b` y `d` no se ajustan | Se toman en sus valores estándar. Es defendible (ver arriba), pero no se puede decir que los parámetros salgan de estos datos. |
 | El contraste con el nulo usa puntos absolutos | Argentina dio 9.8% contra 4.8% — un exceso de **2×**, que es señal — pero como en puntos absolutos son 5.0 y el umbral es 5.0, avisó igual. La corrida global dio 41.9 contra 37.9, que es 1.1× y no significa nada, y avisó lo mismo. Debería ser un cociente. |
 
 ## Referencias
