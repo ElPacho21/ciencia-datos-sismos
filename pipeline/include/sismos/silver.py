@@ -40,7 +40,7 @@ COLUMNAS_NUMERICAS = (
     "horizontalError",
     "depthError",
     "magError",
-)
+)#TODO: Veo que falta algunas columnas como "magNst", "nst" - REVISAR
 
 # Sin epicentro, tiempo o magnitud no se puede calcular eta: la fila no sirve.
 # La profundidad puede faltar porque la distancia del método es epicentral.
@@ -74,7 +74,7 @@ def silver_path(**consulta) -> Path:
     tiene por qué volver a parsear ni arriesgarse a que pandas infiera otra
     cosa.
     """
-    return SILVER_DIR / f"{particion(**consulta)}.parquet"
+    return SILVER_DIR / f"{particion(**consulta)}.parquet"  
 
 
 def refine(crudo: pd.DataFrame) -> pd.DataFrame:

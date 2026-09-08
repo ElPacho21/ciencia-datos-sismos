@@ -42,7 +42,8 @@ D_ESTANDAR = 1.5
 CORRECCION_MAXC = 0.2
 
 # Por debajo de esto no hay catálogo con el que trabajar.
-MIN_EVENTOS = 50
+MIN_EVENTOS = 50  
+# TODO: Considero que hay que aumentar este valor, porque piden mínimo más de 1000 filas
 
 
 def recortar_a_mc(
