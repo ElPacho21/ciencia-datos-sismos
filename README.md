@@ -255,6 +255,57 @@ Los nulos no se penalizan —un dataset real los tiene— pero sí se reportan: 
 log deja la proporción de nulos por columna y el conteo de tipos, que son los
 números que hay que tener a mano.
 
+## Diccionario de datos
+
+Definición campo por campo de los dos CSV publicados. La fila, la clave y el
+objetivo de cada uno ya están en la tabla de más arriba; acá está el resto.
+
+### `clusters_*.csv` — una fila es una secuencia sísmica
+
+| Columna | Qué es |
+|---|---|
+| `cluster_id` | Clave. Es el id del sismo raíz: el primero que disparó el árbol. |
+| `mainshock_id` | El sismo principal del cluster (mayor magnitud o raíz, según el parámetro `mainshock`). |
+| `mainshock_place` | Descripción legible del lugar del sismo principal. |
+| `mainshock_mag` | Magnitud del sismo principal. |
+| `mainshock_time` | Hora del sismo principal, en UTC. |
+| `mainshock_lat` / `mainshock_lon` | Epicentro (latitud/longitud) del sismo principal. |
+| `mainshock_depth` | Profundidad del sismo principal, en km. |
+| `n_eventos` | Tamaño del cluster: principal + réplicas + premonitores. |
+| `n_replicas` | Objetivo. `n_eventos − 1 − n_premonitores`. |
+| `n_premonitores` | Eventos del cluster que preceden al sismo principal. |
+| `duracion_dias` | Días entre el primer y el último evento del cluster. |
+| `extension_km` | Máxima distancia epicentral entre el sismo principal y sus eventos. |
+| `generacion_max` | Cuántas réplicas se encadenan una tras otra (profundidad del árbol). |
+| `raiz_es_mainshock` | Si el id de la raíz coincide con el del sismo principal. Discrepan cuando hubo premonitores. |
+
+### `eventos_*.csv` — una fila es un terremoto
+
+| Columna | Qué es |
+|---|---|
+| `id` | Clave (id del evento en el USGS). |
+| `time` | Hora del evento, en UTC. |
+| `latitude` / `longitude` | Epicentro, en grados. |
+| `depth` | Profundidad, en km. |
+| `mag` | Magnitud. |
+| `place` | Descripción legible del lugar. |
+| `parent_id` | El padre elegido por el vecino más cercano: el `id` de un evento anterior. `NaN` si no tiene. |
+| `parent_mag` | Magnitud de ese padre. |
+| `eta` | Proximidad al padre: `t · r^d · 10^(−b·m_padre)`. |
+| `log10_eta` | Logaritmo de eta, la magnitud sobre la que se ajusta el umbral. |
+| `t_anios` | Tiempo entre el evento y su padre, en años. |
+| `r_km` | Distancia epicentral al padre, en km. |
+| `log10_T` / `log10_R` | Las dos mitades reescaladas de eta (plano donde fondo y réplicas se separan). |
+| `p_fondo` | Probabilidad de pertenecer al fondo según el modelo de mezcla. |
+| `is_aftershock` | Objetivo. `True` si el enlace al padre se acepta como réplica tras el thinning. |
+| `is_aftershock_eta` | La clasificación dura por umbral, para comparar cuánto movió el thinning. |
+| `cluster_id` | A qué cluster pertenece el evento. |
+| `generacion` | Réplicas encadenadas desde la raíz; `0` es la raíz. |
+| `orden_en_cluster` | Posición del evento dentro de su cluster, por tiempo. |
+| `is_mainshock` | Si el evento es el sismo principal de su cluster. |
+| `n_replicas_secuencia` | Réplicas del cluster al que pertenece (igual para todos sus miembros). |
+| `n_replicas` | Réplicas que "produjo" este evento. Sólo el sismo principal las tiene. |
+
 ## Una corrida de referencia
 
 Argentina continental, diez años (`starttime` 2016-01-01, `endtime` 2026-01-01),
