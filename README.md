@@ -274,7 +274,7 @@ poder repetir: con estos parámetros salen exactamente estos números.
 | Cluster más grande | 32 réplicas |
 | Raíz ≠ sismo principal | 42 clusters (2.1%), o sea secuencias con premonitores |
 | Productividad de Utsu | α = 1.227 (R² 0.991) sobre 5 bins |
-| Entregable | 1978 filas × 14 columnas, sin nulos y sin claves repetidas |
+| Entregable | 1978 filas × 15 columnas, sin nulos y sin claves repetidas |
 
 Tres cosas que vale la pena mirar:
 
