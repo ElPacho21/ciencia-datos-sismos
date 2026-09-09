@@ -21,19 +21,19 @@ from airflow.providers.http.hooks.http import HttpHook
 
 log = logging.getLogger(__name__)
 
-CONN_ID = "sismosapi"
+CONN_ID = "usgs_fdsn"
 EVENT_QUERY = "/fdsnws/event/1/query"
 EVENT_COUNT = "/fdsnws/event/1/count"
 
 # Lo que el servicio admite por consulta. Más que esto no lo trunca: lo rechaza
 # con HTTP 400, así que hay que partir el pedido en varios.
-TOPE_SERVICIO = 20000
+SERVICE_LIMIT = 20000
 
 
-def _consulta(
-    starttime, endtime, minmagnitude, eventtype, recorte, formato=None
+def _query(
+    starttime, endtime, minmagnitude, eventtype, bbox, fmt=None
 ) -> dict:
-    parametros = {
+    params = {
         "starttime": starttime,
         "endtime": endtime,
         "eventtype": eventtype,
@@ -41,73 +41,73 @@ def _consulta(
     }
     # El rectángulo lo aplica el servicio: filtrar después de bajar sería pedir
     # el mundo entero para tirar el 99%, y encima chocaría con el tope de 20000.
-    parametros.update({k: v for k, v in (recorte or {}).items() if v is not None})
+    params.update({k: v for k, v in (bbox or {}).items() if v is not None})
 
-    if formato is not None:
-        parametros["format"] = formato
-    return parametros
+    if fmt is not None:
+        params["format"] = fmt
+    return params
 
 
-def _pedir(hook, endpoint, parametros, timeout, retries):
+def _request(hook, endpoint, params, timeout, retries):
     """Un pedido al servicio, con reintentos espaciados."""
-    for intento in range(retries):
+    for attempt in range(retries):
         try:
-            respuesta = hook.run(
+            response = hook.run(
                 endpoint=endpoint,
-                data=parametros,
+                data=params,
                 extra_options={"check_response": True, "timeout": timeout},
             )
-            return respuesta
+            return response
         except Exception:
-            if intento == retries - 1:
+            if attempt == retries - 1:
                 raise
-            time.sleep(2 * (intento + 1))
+            time.sleep(2 * (attempt + 1))
 
 
-def contar(
+def count(
     starttime,
     endtime,
     eventtype="earthquake",
     minmagnitude=0,
-    recorte=None,
+    bbox=None,
     timeout=60,
     retries=3,
 ) -> int:
     """Cuántos eventos empareja la consulta, sin bajarlos."""
     hook = HttpHook(method="GET", http_conn_id=CONN_ID)
-    respuesta = _pedir(
+    response = _request(
         hook,
         EVENT_COUNT,
-        _consulta(
-            starttime, endtime, minmagnitude, eventtype, recorte, formato="geojson"
+        _query(
+            starttime, endtime, minmagnitude, eventtype, bbox, fmt="geojson"
         ),
         timeout,
         retries,
     )
-    return int(respuesta.json()["count"])
+    return int(response.json()["count"])
 
 
-def _concatenar(pedazos: list[bytes]) -> bytes:
+def _concatenate(chunks: list[bytes]) -> bytes:
     """Pega varios csv en uno, dejando una sola cabecera.
 
     Cada respuesta del servicio trae la suya, así que las de los pedazos que no
     son el primero hay que sacarlas: si no, quedarían filas con la palabra
     'time' en el medio del archivo y silver las convertiría en nulos.
     """
-    if len(pedazos) == 1:
-        return pedazos[0]
+    if len(chunks) == 1:
+        return chunks[0]
 
-    salida = [pedazos[0].rstrip(b"\n")]
-    for pedazo in pedazos[1:]:
-        cuerpo = pedazo.split(b"\n", 1)
-        if len(cuerpo) == 2 and cuerpo[1].strip():
-            salida.append(cuerpo[1].rstrip(b"\n"))
+    out = [chunks[0].rstrip(b"\n")]
+    for chunk in chunks[1:]:
+        body = chunk.split(b"\n", 1)
+        if len(body) == 2 and body[1].strip():
+            out.append(body[1].rstrip(b"\n"))
 
-    return b"\n".join(salida) + b"\n"
+    return b"\n".join(out) + b"\n"
 
 
-def _bajar(
-    hook, desde, hasta, total, consulta_base, recorte, timeout, retries
+def _download(
+    hook, start, end, total, base_query, bbox, timeout, retries
 ) -> list[bytes]:
     """Baja el rango, partiéndolo por la mitad mientras no entre en una consulta.
 
@@ -120,32 +120,32 @@ def _bajar(
     `total` viene contado por quien llama, así que cada nivel de la recursión
     cuesta **una** consulta al endpoint de conteo, no dos.
     """
-    if total <= TOPE_SERVICIO:
-        respuesta = _pedir(
+    if total <= SERVICE_LIMIT:
+        response = _request(
             hook,
             EVENT_QUERY,
-            {**consulta_base, "starttime": desde, "endtime": hasta},
+            {**base_query, "starttime": start, "endtime": end},
             timeout,
             retries,
         )
-        return [respuesta.content]
+        return [response.content]
 
-    medio = desde + (hasta - desde) / 2
+    mid = start + (end - start) / 2
 
     # Si la ventana ya no se puede partir, el problema no tiene salida por acá:
     # hay más de 20000 eventos en un instante. Pasa sólo con rangos absurdos.
-    if not desde < medio < hasta:
+    if not start < mid < end:
         raise ValueError(
-            f"El rango {desde} a {hasta} empareja {total} sismos y ya no se "
-            f"puede partir más. Subí `minmagnitude` o achicá la región."
+            f"The range {start} to {end} matches {total} quakes and can no "
+            f"longer be split. Raise `minmagnitude` or shrink the region."
         )
 
-    total_izquierda = contar(
-        starttime=desde,
-        endtime=medio,
-        eventtype=consulta_base["eventtype"],
-        minmagnitude=consulta_base["minmagnitude"],
-        recorte=recorte,
+    left_total = count(
+        starttime=start,
+        endtime=mid,
+        eventtype=base_query["eventtype"],
+        minmagnitude=base_query["minmagnitude"],
+        bbox=bbox,
         timeout=timeout,
         retries=retries,
     )
@@ -153,15 +153,15 @@ def _bajar(
     # Un evento justo en el borde puede caer en las dos mitades. No se corrige
     # acá: silver deduplica por `id`, y correr el borde un microsegundo abriría
     # la puerta a perder eventos, que es el error caro.
-    return _bajar(
-        hook, desde, medio, total_izquierda, consulta_base, recorte, timeout, retries
-    ) + _bajar(
+    return _download(
+        hook, start, mid, left_total, base_query, bbox, timeout, retries
+    ) + _download(
         hook,
-        medio,
-        hasta,
-        total - total_izquierda,
-        consulta_base,
-        recorte,
+        mid,
+        end,
+        total - left_total,
+        base_query,
+        bbox,
         timeout,
         retries,
     )
@@ -181,62 +181,63 @@ def fetch(
     timeout=60,
     retries=3,
 ) -> bytes:
-    recorte = {
+    bbox = {
         "minlatitude": minlatitude,
         "maxlatitude": maxlatitude,
         "minlongitude": minlongitude,
         "maxlongitude": maxlongitude,
     }
-    desde = pendulum.parse(str(starttime))
-    hasta = pendulum.parse(str(endtime))
+    start = pendulum.parse(str(starttime))
+    end = pendulum.parse(str(endtime))
 
-    if hasta <= desde:
-        raise ValueError(f"La ventana está al revés o vacía: {starttime} a {endtime}.")
+    if end <= start:
+        raise ValueError(f"The window is reversed or empty: {starttime} to {endtime}.")
 
-    total = contar(
+    total = count(
         starttime=starttime,
         endtime=endtime,
         eventtype=eventtype,
         minmagnitude=minmagnitude,
-        recorte=recorte,
+        bbox=bbox,
         timeout=timeout,
         retries=retries,
     )
 
     if total == 0:
         raise ValueError(
-            f"La consulta no empareja ningún sismo entre {starttime} y {endtime} "
-            f"con magnitud mínima {minmagnitude}."
+            f"The query matches no quakes between {starttime} and {endtime} "
+            f"with minimum magnitude {minmagnitude}."
         )
 
     if limit and total > limit:
         raise ValueError(
-            f"El rango empareja {total} sismos y el límite pedido es {limit}. "
-            f"Subí `limit` para bajarlos todos, acortá la ventana o subí "
-            f"`minmagnitude`. No se trunca en silencio a propósito: el catálogo "
-            f"recortado daría un Mc y un b que no son los del período pedido."
+            f"The range matches {total} quakes and the requested limit is {limit}. "
+            f"Raise `limit` to download them all, shorten the window or raise "
+            f"`minmagnitude`. It is not truncated silently on purpose: the "
+            f"clipped catalog would give an Mc and a b that are not those of "
+            f"the requested period."
         )
 
     hook = HttpHook(method="GET", http_conn_id=CONN_ID)
 
     # La consulta sin el rango de fechas: es lo único que cambia entre pedazos.
-    consulta_base = _consulta(
-        None, None, minmagnitude, eventtype, recorte, formato=format
+    base_query = _query(
+        None, None, minmagnitude, eventtype, bbox, fmt=format
     )
-    consulta_base.pop("starttime")
-    consulta_base.pop("endtime")
+    base_query.pop("starttime")
+    base_query.pop("endtime")
 
-    pedazos = _bajar(
-        hook, desde, hasta, total, consulta_base, recorte, timeout, retries
+    chunks = _download(
+        hook, start, end, total, base_query, bbox, timeout, retries
     )
 
-    if len(pedazos) > 1:
+    if len(chunks) > 1:
         log.info(
-            "El rango empareja %d sismos, más de los %d que admite el servicio "
-            "por consulta: se bajó en %d pedidos.",
+            "The range matches %d quakes, more than the %d the service allows "
+            "per query: downloaded in %d requests.",
             total,
-            TOPE_SERVICIO,
-            len(pedazos),
+            SERVICE_LIMIT,
+            len(chunks),
         )
 
-    return _concatenar(pedazos)
+    return _concatenate(chunks)

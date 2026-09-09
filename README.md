@@ -95,7 +95,7 @@ una ley de potencias, y hace que los árboles de réplicas encadenen zonas sin
 relación hasta armar clusters de 5000 km.
 
 El rectángulo entra en el nombre de archivo de **todas** las capas, vía
-`particion()`. Sin eso dos regiones distintas se pisarían el mismo `bronze` y
+`partition()`. Sin eso dos regiones distintas se pisarían el mismo `bronze` y
 `silver`, y estarías analizando Argentina creyendo que es California.
 
 ### `refine_silver` → el catálogo limpio
@@ -223,15 +223,15 @@ hacia adelante alcanza — al llegar a un evento, el cluster de su padre ya est�
 resuelto. O(N), sin recursión.
 
 Produce dos tablas: el catálogo evento por evento con `cluster_id`,
-`generacion`, `orden_en_cluster` e `is_mainshock`, y **el resumen por cluster**,
+`generation`, `order_in_cluster` e `is_mainshock`, y **el resumen por cluster**,
 que es el entregable: sismo principal, magnitud, cantidad de réplicas,
 premonitores, duración y extensión.
 
-**Quién es el sismo principal** es una decisión, no un detalle. `mayor` toma el
-de mayor magnitud (lo que usan Zaliapin & Ben-Zion) y `raiz` el que disparó la
-secuencia. Difieren cuando hubo premonitores: un M4.5 abre el árbol y tres horas
-después llega el M7. En la corrida de referencia discrepan en el 4.6% de los
-clusters.
+**Quién es el sismo principal** es una decisión, no un detalle. `largest` toma
+el de mayor magnitud (lo que usan Zaliapin & Ben-Zion) y `root` el que disparó
+la secuencia. Difieren cuando hubo premonitores: un M4.5 abre el árbol y tres
+horas después llega el M7. En la corrida de referencia discrepan en el 4.6% de
+los clusters.
 
 ### `publish_csv` → el entregable, y dudar de él
 
@@ -243,8 +243,8 @@ Publica dos tablas, que son las dos unidades de análisis posibles del proyecto:
 
 | Archivo | Una fila es | Clave | Objetivo |
 |---|---|---|---|
-| `clusters_*.csv` | una **secuencia sísmica**: un sismo principal con todas sus réplicas | `cluster_id` | `n_replicas` |
-| `eventos_*.csv` | un **terremoto**, con a qué secuencia cayó | `id` | `is_aftershock` |
+| `clusters_*.csv` | una **secuencia sísmica**: un sismo principal con todas sus réplicas | `cluster_id` | `n_aftershocks` |
+| `events_*.csv` | un **terremoto**, con a qué secuencia cayó | `id` | `is_aftershock` |
 
 Y valida antes de dar la corrida por buena: si la clave repite, si quedaron
 menos de 1000 filas o si alguna columna quedó entera en nulo, **la tarea
@@ -271,15 +271,15 @@ objetivo de cada uno ya están en la tabla de más arriba; acá está el resto.
 | `mainshock_time` | Hora del sismo principal, en UTC. |
 | `mainshock_lat` / `mainshock_lon` | Epicentro (latitud/longitud) del sismo principal. |
 | `mainshock_depth` | Profundidad del sismo principal, en km. |
-| `n_eventos` | Tamaño del cluster: principal + réplicas + premonitores. |
-| `n_replicas` | Objetivo. `n_eventos − 1 − n_premonitores`. |
-| `n_premonitores` | Eventos del cluster que preceden al sismo principal. |
-| `duracion_dias` | Días entre el primer y el último evento del cluster. |
-| `extension_km` | Máxima distancia epicentral entre el sismo principal y sus eventos. |
-| `generacion_max` | Cuántas réplicas se encadenan una tras otra (profundidad del árbol). |
-| `raiz_es_mainshock` | Si el id de la raíz coincide con el del sismo principal. Discrepan cuando hubo premonitores. |
+| `n_events` | Tamaño del cluster: principal + réplicas + premonitores. |
+| `n_aftershocks` | Objetivo. `n_events − 1 − n_foreshocks`. |
+| `n_foreshocks` | Eventos del cluster que preceden al sismo principal. |
+| `duration_days` | Días entre el primer y el último evento del cluster. |
+| `extent_km` | Máxima distancia epicentral entre el sismo principal y sus eventos. |
+| `max_generation` | Cuántas réplicas se encadenan una tras otra (profundidad del árbol). |
+| `root_is_mainshock` | Si el id de la raíz coincide con el del sismo principal. Discrepan cuando hubo premonitores. |
 
-### `eventos_*.csv` — una fila es un terremoto
+### `events_*.csv` — una fila es un terremoto
 
 | Columna | Qué es |
 |---|---|
@@ -293,23 +293,23 @@ objetivo de cada uno ya están en la tabla de más arriba; acá está el resto.
 | `parent_mag` | Magnitud de ese padre. |
 | `eta` | Proximidad al padre: `t · r^d · 10^(−b·m_padre)`. |
 | `log10_eta` | Logaritmo de eta, la magnitud sobre la que se ajusta el umbral. |
-| `t_anios` | Tiempo entre el evento y su padre, en años. |
+| `t_years` | Tiempo entre el evento y su padre, en años. |
 | `r_km` | Distancia epicentral al padre, en km. |
 | `log10_T` / `log10_R` | Las dos mitades reescaladas de eta (plano donde fondo y réplicas se separan). |
-| `p_fondo` | Probabilidad de pertenecer al fondo según el modelo de mezcla. |
+| `p_background` | Probabilidad de pertenecer al fondo según el modelo de mezcla. |
 | `is_aftershock` | Objetivo. `True` si el enlace al padre se acepta como réplica tras el thinning. |
 | `is_aftershock_eta` | La clasificación dura por umbral, para comparar cuánto movió el thinning. |
 | `cluster_id` | A qué cluster pertenece el evento. |
-| `generacion` | Réplicas encadenadas desde la raíz; `0` es la raíz. |
-| `orden_en_cluster` | Posición del evento dentro de su cluster, por tiempo. |
+| `generation` | Réplicas encadenadas desde la raíz; `0` es la raíz. |
+| `order_in_cluster` | Posición del evento dentro de su cluster, por tiempo. |
 | `is_mainshock` | Si el evento es el sismo principal de su cluster. |
-| `n_replicas_secuencia` | Réplicas del cluster al que pertenece (igual para todos sus miembros). |
-| `n_replicas` | Réplicas que "produjo" este evento. Sólo el sismo principal las tiene. |
+| `n_aftershocks_sequence` | Réplicas del cluster al que pertenece (igual para todos sus miembros). |
+| `n_aftershocks` | Réplicas que "produjo" este evento. Sólo el sismo principal las tiene. |
 
 ## Una corrida de referencia
 
 Argentina continental, diez años (`starttime` 2016-01-01, `endtime` 2026-01-01),
-`minmagnitude` 3.5, `seed` 1, `n_randomizaciones` 5. Es la corrida que hay que
+`minmagnitude` 3.5, `seed` 1, `n_randomizations` 5. Es la corrida que hay que
 poder repetir: con estos parámetros salen exactamente estos números.
 
 | | |

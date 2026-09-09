@@ -30,8 +30,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from sismos import OUTPUT_DIR, particion
-from sismos.geo import distancias_a_punto
+from sismos import OUTPUT_DIR, partition
+from sismos.geo import distances_to_point
 
 log = logging.getLogger(__name__)
 
@@ -45,18 +45,18 @@ ALPHA_PLAUSIBLE = (0.5, 1.5)
 # por debajo de los mil kilómetros. Un cluster mucho más extendido que esto no
 # es una secuencia, es el árbol encadenando generación tras generación
 # sismicidad de regiones que no tienen nada que ver entre sí.
-EXTENSION_MAXIMA_KM = 1500.0
+MAX_EXTENT_KM = 1500.0
 
 
-def eventos_path(seed, mainshock, **consulta) -> Path:
+def events_path(seed, mainshock, **query) -> Path:
     """El catálogo evento por evento, con a qué cluster pertenece cada uno."""
     return CLUSTERS_DIR / (
-        f"eventos_{particion(**consulta)}"
+        f"events_{partition(**query)}"
         f"_mainshock={mainshock}_seed={seed}.parquet"
     )
 
 
-def resumen_path(seed, mainshock, **consulta) -> Path:
+def summary_path(seed, mainshock, **query) -> Path:
     """Una fila por cluster: el entregable del pipeline.
 
     `mainshock` va en el nombre por el mismo motivo que la semilla: cambia los
@@ -66,147 +66,147 @@ def resumen_path(seed, mainshock, **consulta) -> Path:
     distinto la segunda corrida devolvería los clusters de la primera.
     """
     return CLUSTERS_DIR / (
-        f"resumen_{particion(**consulta)}"
+        f"summary_{partition(**query)}"
         f"_mainshock={mainshock}_seed={seed}.parquet"
     )
 
 
-def clusters_write(destino: Path, df: pd.DataFrame) -> None:
-    destino.parent.mkdir(parents=True, exist_ok=True)
-    df.to_parquet(destino, index=False)
+def clusters_write(destination: Path, df: pd.DataFrame) -> None:
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    df.to_parquet(destination, index=False)
 
 
-def clusters_read(ruta: Path) -> pd.DataFrame:
-    return pd.read_parquet(ruta)
+def clusters_read(path: Path) -> pd.DataFrame:
+    return pd.read_parquet(path)
 
 
-def _asignar_clusters(eventos: pd.DataFrame):
+def _assign_clusters(events: pd.DataFrame):
     """Una pasada cronológica: cada evento hereda el cluster de su padre."""
-    ids = eventos["id"].to_numpy()
-    padres = eventos["parent_id"].to_numpy()
-    sin_padre = eventos["parent_id"].isna().to_numpy()
-    es_replica = eventos["is_aftershock"].to_numpy(dtype=bool)
+    ids = events["id"].to_numpy()
+    parents = events["parent_id"].to_numpy()
+    no_parent = events["parent_id"].isna().to_numpy()
+    is_after = events["is_aftershock"].to_numpy(dtype=bool)
 
-    posicion = {evento: i for i, evento in enumerate(ids)}
+    position = {event: i for i, event in enumerate(ids)}
 
-    cluster = np.empty(len(eventos), dtype=object)
-    generacion = np.zeros(len(eventos), dtype=int)
+    cluster = np.empty(len(events), dtype=object)
+    generation = np.zeros(len(events), dtype=int)
 
-    for i in range(len(eventos)):
-        if sin_padre[i] or not es_replica[i]:
+    for i in range(len(events)):
+        if no_parent[i] or not is_after[i]:
             # Enlace rechazado por el thinning (o evento sin vecino): es raíz.
             cluster[i] = ids[i]
             continue
 
-        j = posicion[padres[i]]
+        j = position[parents[i]]
         if j >= i:
             raise ValueError(
-                f"El padre de {ids[i]!r} no es anterior a él. El catálogo tiene "
-                "que venir ordenado por tiempo para poder recorrerlo de una pasada."
+                f"The parent of {ids[i]!r} is not earlier than it. The catalog "
+                "must be sorted by time to be traversed in a single pass."
             )
 
         cluster[i] = cluster[j]
-        generacion[i] = generacion[j] + 1
+        generation[i] = generation[j] + 1
 
-    return cluster, generacion
+    return cluster, generation
 
 
-def build_clusters(clasificados: pd.DataFrame, definicion_mainshock: str = "mayor"):
-    """Arma los clusters y devuelve (eventos, resumen).
+def build_clusters(classified: pd.DataFrame, mainshock_definition: str = "largest"):
+    """Arma los clusters y devuelve (events, summary).
 
-    `definicion_mainshock` es una decisión de método, no un detalle:
+    `mainshock_definition` es una decisión de método, no un detalle:
 
-    - `"mayor"`: el evento de mayor magnitud del cluster, que es lo que usan
+    - `"largest"`: el evento de mayor magnitud del cluster, que es lo que usan
       Zaliapin & Ben-Zion.
-    - `"raiz"`: el primero del cluster, el que disparó el árbol.
+    - `"root"`: el primero del cluster, el que disparó el árbol.
 
     Difieren cuando la secuencia arranca con un premonitor: un M4.5 abre el
     árbol y tres horas después llega el M7. La raíz es el M4.5, pero el sismo
     principal es el otro. El resumen guarda las dos: `cluster_id` **es** el id
-    de la raíz —así se arma en `_asignar_clusters`— y `mainshock_id` el del
-    principal, de modo que `raiz_es_mainshock` dice en cuántos discrepan sin
+    de la raíz —así se arma en `_assign_clusters`— y `mainshock_id` el del
+    principal, de modo que `root_is_mainshock` dice en cuántos discrepan sin
     repetir una columna.
     """
-    if definicion_mainshock not in ("mayor", "raiz"):
+    if mainshock_definition not in ("largest", "root"):
         raise ValueError(
-            f"Definición de sismo principal desconocida: {definicion_mainshock!r}. "
-            "Usá 'mayor' o 'raiz'."
+            f"Unknown mainshock definition: {mainshock_definition!r}. "
+            "Use 'largest' or 'root'."
         )
 
-    eventos = clasificados.sort_values("time").reset_index(drop=True)
-    cluster, generacion = _asignar_clusters(eventos)
+    events = classified.sort_values("time").reset_index(drop=True)
+    cluster, generation = _assign_clusters(events)
 
-    eventos["cluster_id"] = cluster
-    eventos["generacion"] = generacion
-    eventos["orden_en_cluster"] = eventos.groupby("cluster_id").cumcount()
+    events["cluster_id"] = cluster
+    events["generation"] = generation
+    events["order_in_cluster"] = events.groupby("cluster_id").cumcount()
 
-    if definicion_mainshock == "mayor":
+    if mainshock_definition == "largest":
         # idxmax se queda con el primero ante empates, o sea el más temprano.
-        principal = eventos.groupby("cluster_id")["mag"].idxmax()
+        main_idx = events.groupby("cluster_id")["mag"].idxmax()
     else:
-        raices = eventos.index[eventos["generacion"] == 0]
-        principal = pd.Series(raices, index=eventos.loc[raices, "cluster_id"])
+        roots = events.index[events["generation"] == 0]
+        main_idx = pd.Series(roots, index=events.loc[roots, "cluster_id"])
 
-    eventos["is_mainshock"] = eventos.index.isin(principal.to_numpy())
+    events["is_mainshock"] = events.index.isin(main_idx.to_numpy())
 
-    lat_rad = np.radians(eventos["latitude"].to_numpy(dtype=float))
-    lon_rad = np.radians(eventos["longitude"].to_numpy(dtype=float))
+    lat_rad = np.radians(events["latitude"].to_numpy(dtype=float))
+    lon_rad = np.radians(events["longitude"].to_numpy(dtype=float))
 
-    hay_place = "place" in eventos.columns
+    has_place = "place" in events.columns
 
-    filas = []
-    for cluster_id, grupo in eventos.groupby("cluster_id", sort=False):
-        k = int(principal[cluster_id])
-        miembros = grupo.index.to_numpy()
+    rows = []
+    for cluster_id, group in events.groupby("cluster_id", sort=False):
+        k = int(main_idx[cluster_id])
+        members = group.index.to_numpy()
 
-        momento = eventos["time"].iloc[k]
-        premonitores = int((grupo["time"] < momento).sum())
+        moment = events["time"].iloc[k]
+        foreshocks = int((group["time"] < moment).sum())
 
-        distancias = distancias_a_punto(
-            lat_rad[miembros], lon_rad[miembros], lat_rad[k], lon_rad[k]
+        distances = distances_to_point(
+            lat_rad[members], lon_rad[members], lat_rad[k], lon_rad[k]
         )
 
         # La raíz sólo se usa para saber si coincide con el sismo principal: su
         # id no se publica porque `cluster_id` ya *es* el id de la raíz.
-        raiz = grupo.loc[grupo["generacion"] == 0, "id"].iloc[0]
+        root = group.loc[group["generation"] == 0, "id"].iloc[0]
 
-        fila = {
+        row = {
             "cluster_id": cluster_id,
-            "mainshock_id": eventos["id"].iloc[k],
+            "mainshock_id": events["id"].iloc[k],
         }
 
         # Lo primero que mira una persona al abrir el csv. Va acá arriba, al lado
         # de la clave, y no al final entre las métricas.
-        if hay_place:
-            fila["mainshock_place"] = eventos["place"].iloc[k]
+        if has_place:
+            row["mainshock_place"] = events["place"].iloc[k]
 
-        fila.update(
+        row.update(
             {
-                "mainshock_mag": float(eventos["mag"].iloc[k]),
-                "mainshock_time": momento,
-                "mainshock_lat": float(eventos["latitude"].iloc[k]),
-                "mainshock_lon": float(eventos["longitude"].iloc[k]),
+                "mainshock_mag": float(events["mag"].iloc[k]),
+                "mainshock_time": moment,
+                "mainshock_lat": float(events["latitude"].iloc[k]),
+                "mainshock_lon": float(events["longitude"].iloc[k]),
                 # Predictor legítimo y hasta ahora ausente: la sismicidad
                 # superficial andina y la del slab profundo son poblaciones
                 # distintas, y producen réplicas de forma distinta.
-                "mainshock_depth": float(eventos["depth"].iloc[k]),
-                "n_eventos": int(len(grupo)),
+                "mainshock_depth": float(events["depth"].iloc[k]),
+                "n_events": int(len(group)),
                 # Todo lo que no es el sismo principal ni le antecede.
-                "n_replicas": int(len(grupo) - 1 - premonitores),
-                "n_premonitores": premonitores,
-                "duracion_dias": float(
-                    (grupo["time"].max() - grupo["time"].min()).total_seconds() / 86400
+                "n_aftershocks": int(len(group) - 1 - foreshocks),
+                "n_foreshocks": foreshocks,
+                "duration_days": float(
+                    (group["time"].max() - group["time"].min()).total_seconds() / 86400
                 ),
-                "extension_km": float(distancias.max()),
-                "generacion_max": int(grupo["generacion"].max()),
-                "raiz_es_mainshock": bool(raiz == eventos["id"].iloc[k]),
+                "extent_km": float(distances.max()),
+                "max_generation": int(group["generation"].max()),
+                "root_is_mainshock": bool(root == events["id"].iloc[k]),
             }
         )
-        filas.append(fila)
+        rows.append(row)
 
-    resumen = (
-        pd.DataFrame(filas)
-        .sort_values("n_replicas", ascending=False)
+    summary = (
+        pd.DataFrame(rows)
+        .sort_values("n_aftershocks", ascending=False)
         .reset_index(drop=True)
     )
 
@@ -214,55 +214,55 @@ def build_clusters(clasificados: pd.DataFrame, definicion_mainshock: str = "mayo
     # réplicas produjo *este* sismo?" se hace evento por evento. Sin estas dos
     # columnas hay que cruzar las dos tablas a mano por `cluster_id`, que es
     # justo el paso donde se cuelan los errores.
-    replicas_por_cluster = resumen.set_index("cluster_id")["n_replicas"]
+    aftershocks_per_cluster = summary.set_index("cluster_id")["n_aftershocks"]
 
     # Las de la secuencia entera: igual para todos los miembros del cluster.
-    eventos["n_replicas_secuencia"] = (
-        eventos["cluster_id"].map(replicas_por_cluster).astype(int)
+    events["n_aftershocks_sequence"] = (
+        events["cluster_id"].map(aftershocks_per_cluster).astype(int)
     )
 
     # Las que produjo este evento: sólo el sismo principal las "produce", así
     # que para las réplicas y los premonitores vale 0.
-    eventos["n_replicas"] = np.where(
-        eventos["is_mainshock"], eventos["n_replicas_secuencia"], 0
+    events["n_aftershocks"] = np.where(
+        events["is_mainshock"], events["n_aftershocks_sequence"], 0
     ).astype(int)
 
-    con_replicas = resumen[resumen["n_replicas"] > 0]
-    discrepan = int((~resumen["raiz_es_mainshock"]).sum())
+    with_aftershocks = summary[summary["n_aftershocks"] > 0]
+    differ = int((~summary["root_is_mainshock"]).sum())
 
     log.info(
-        "Clusters (%s): %d clusters sobre %d eventos | %d con al menos una "
-        "réplica | el más grande tiene %d | %d clusters (%.1f%%) donde la raíz "
-        "no es el sismo principal.",
-        definicion_mainshock,
-        len(resumen),
-        len(eventos),
-        len(con_replicas),
-        int(resumen["n_replicas"].max()),
-        discrepan,
-        100 * discrepan / len(resumen),
+        "Clusters (%s): %d clusters over %d events | %d with at least one "
+        "aftershock | the largest has %d | %d clusters (%.1f%%) where the root "
+        "is not the mainshock.",
+        mainshock_definition,
+        len(summary),
+        len(events),
+        len(with_aftershocks),
+        int(summary["n_aftershocks"].max()),
+        differ,
+        100 * differ / len(summary),
     )
 
-    desparramados = resumen[resumen["extension_km"] > EXTENSION_MAXIMA_KM]
-    if len(desparramados):
+    scattered = summary[summary["extent_km"] > MAX_EXTENT_KM]
+    if len(scattered):
         log.warning(
-            "%d cluster(s) se extienden más de %.0f km (el mayor, %.0f km "
-            "alrededor de %s, con %d generaciones). Ninguna secuencia de "
-            "réplicas abarca eso: el árbol está encadenando regiones sin "
-            "relación, que es lo que pasa cuando el catálogo no está acotado a "
-            "una zona. Los conteos de esos clusters no son creíbles.",
-            len(desparramados),
-            EXTENSION_MAXIMA_KM,
-            desparramados["extension_km"].max(),
-            desparramados.loc[desparramados["extension_km"].idxmax(), "mainshock_id"],
-            int(desparramados["generacion_max"].max()),
+            "%d cluster(s) span more than %.0f km (the largest, %.0f km "
+            "around %s, with %d generations). No aftershock sequence covers "
+            "that: the tree is chaining unrelated regions, which is what "
+            "happens when the catalog is not bounded to a zone. The counts of "
+            "those clusters are not credible.",
+            len(scattered),
+            MAX_EXTENT_KM,
+            scattered["extent_km"].max(),
+            scattered.loc[scattered["extent_km"].idxmax(), "mainshock_id"],
+            int(scattered["max_generation"].max()),
         )
 
-    return eventos, resumen
+    return events, summary
 
 
-def productividad(
-    resumen: pd.DataFrame, ancho_bin: float = 0.5, min_mainshocks: int = 5
+def productivity(
+    summary: pd.DataFrame, bin_width: float = 0.5, min_mainshocks: int = 5
 ):
     """Ley de productividad de Utsu: el número medio de réplicas ~ 10^(alpha·M).
 
@@ -276,68 +276,67 @@ def productividad(
     resultado: los sismos chicos que no dispararon nada son justamente parte de
     lo que la ley predice.
     """
-    magnitudes = resumen["mainshock_mag"].to_numpy(dtype=float)
-    replicas = resumen["n_replicas"].to_numpy(dtype=float)
+    magnitudes = summary["mainshock_mag"].to_numpy(dtype=float)
+    aftershocks = summary["n_aftershocks"].to_numpy(dtype=float)
 
-    bordes = np.arange(
-        np.floor(magnitudes.min() / ancho_bin) * ancho_bin,
-        np.ceil(magnitudes.max() / ancho_bin) * ancho_bin + ancho_bin / 2,
-        ancho_bin,
+    edges = np.arange(
+        np.floor(magnitudes.min() / bin_width) * bin_width,
+        np.ceil(magnitudes.max() / bin_width) * bin_width + bin_width / 2,
+        bin_width,
     )
-    indice = np.clip(np.digitize(magnitudes, bordes) - 1, 0, len(bordes) - 2)
+    index = np.clip(np.digitize(magnitudes, edges) - 1, 0, len(edges) - 2)
 
-    centros, medias, cuentas = [], [], []
-    for k in range(len(bordes) - 1):
-        seleccion = indice == k
-        if seleccion.sum() < min_mainshocks:
+    centers, means, counts = [], [], []
+    for k in range(len(edges) - 1):
+        selection = index == k
+        if selection.sum() < min_mainshocks:
             continue
-        media = float(replicas[seleccion].mean())
-        if media <= 0:
+        mean = float(aftershocks[selection].mean())
+        if mean <= 0:
             continue
-        centros.append(float(bordes[k] + ancho_bin / 2))
-        medias.append(media)
-        cuentas.append(int(seleccion.sum()))
+        centers.append(float(edges[k] + bin_width / 2))
+        means.append(mean)
+        counts.append(int(selection.sum()))
 
-    if len(centros) < 3:
+    if len(centers) < 3:
         log.warning(
-            "Sólo %d bins de magnitud con suficientes sismos principales: no "
-            "alcanza para ajustar la productividad. Hace falta una ventana más "
-            "larga.",
-            len(centros),
+            "Only %d magnitude bins with enough mainshocks: not enough to fit "
+            "productivity. A longer window is needed.",
+            len(centers),
         )
         return None
 
-    x = np.array(centros)
-    y = np.log10(medias)
-    alpha, ordenada = np.polyfit(x, y, 1)
-    residuos = y - (alpha * x + ordenada)
-    varianza = ((y - y.mean()) ** 2).sum()
-    r2 = float(1 - (residuos**2).sum() / varianza) if varianza > 0 else 0.0
+    x = np.array(centers)
+    y = np.log10(means)
+    alpha, intercept = np.polyfit(x, y, 1)
+    residuals = y - (alpha * x + intercept)
+    variance = ((y - y.mean()) ** 2).sum()
+    r2 = float(1 - (residuals**2).sum() / variance) if variance > 0 else 0.0
 
     if not ALPHA_PLAUSIBLE[0] <= alpha <= ALPHA_PLAUSIBLE[1]:
         log.warning(
-            "El exponente de productividad dio alpha=%.3f, fuera del rango "
-            "habitual %s. La ley de Utsu no se está reproduciendo: revisá Mc, "
-            "el umbral y el thinning antes de creerle a los conteos.",
+            "The productivity exponent came out alpha=%.3f, outside the usual "
+            "range %s. Utsu's law is not being reproduced: check Mc, the "
+            "threshold and the thinning before trusting the counts.",
             alpha,
             ALPHA_PLAUSIBLE,
         )
     else:
         log.info(
-            "Productividad de Utsu: alpha=%.3f (R²=%.3f) sobre %d bins de "
-            "magnitud — dentro del rango esperado.",
+            "Utsu productivity: alpha=%.3f (R²=%.3f) over %d magnitude bins — "
+            "within the expected range.",
             alpha,
             r2,
-            len(centros),
+            len(centers),
         )
 
     return {
         "alpha": float(alpha),
-        "ordenada": float(ordenada),
+        "intercept": float(intercept),
         "r2": r2,
-        "n_bins": len(centros),
+        "n_bins": len(centers),
         "bins": [
-            {"magnitud": c, "replicas_promedio": m, "n_mainshocks": q}
-            for c, m, q in zip(centros, medias, cuentas)
+            {"magnitude": c, "mean_aftershocks": m, "n_mainshocks": q}
+            for c, m, q in zip(centers, means, counts)
         ],
     }

@@ -19,10 +19,10 @@ import pytest
 from airflow.dag_processing.dagbag import DagBag
 
 DAG_ID = "detector_replicas_api"
-CARPETA_DAGS = Path(__file__).resolve().parents[2] / "dags"
+DAGS_FOLDER = Path(__file__).resolve().parents[2] / "dags"
 
 # Quién necesita a quién. Es el contrato del pipeline escrito una sola vez.
-DEPENDENCIAS = {
+DEPENDENCIES = {
     "land_bronze": set(),
     "refine_silver": {"land_bronze"},
     "estimate_mc": {"refine_silver"},
@@ -42,7 +42,7 @@ DEPENDENCIAS = {
 @pytest.fixture(scope="module")
 def dagbag():
     """Parsear la carpeta es caro: se hace una sola vez para todo el módulo."""
-    return DagBag(dag_folder=CARPETA_DAGS)
+    return DagBag(dag_folder=DAGS_FOLDER)
 
 
 @pytest.fixture(scope="module")
@@ -51,19 +51,19 @@ def dag(dagbag):
 
 
 def test_no_import_errors(dagbag):
-    assert not dagbag.import_errors, f"errores de import: {dagbag.import_errors}"
+    assert not dagbag.import_errors, f"import errors: {dagbag.import_errors}"
 
 
-def test_dag_registrado(dagbag):
-    assert DAG_ID in dagbag.dags, f"sólo se encontraron {dagbag.dag_ids}"
+def test_dag_registered(dagbag):
+    assert DAG_ID in dagbag.dags, f"only found {dagbag.dag_ids}"
 
 
-def test_dag_se_dispara_a_mano(dag):
+def test_dag_triggered_manually(dag):
     """El DAG no corre solo: la ventana la elige quien lo dispara."""
     assert dag.schedule is None
 
 
-def test_params_de_la_consulta(dag):
+def test_query_params(dag):
     """Los parámetros de la consulta son la interfaz contra la API FDSN."""
     assert {
         "starttime",
@@ -77,21 +77,21 @@ def test_params_de_la_consulta(dag):
     } <= set(dag.params)
 
 
-def test_params_del_metodo(dag):
+def test_method_params(dag):
     """Las decisiones de método también son parámetros, no constantes."""
-    assert {"mainshock", "seed", "n_randomizaciones"} <= set(dag.params)
+    assert {"mainshock", "seed", "n_randomizations"} <= set(dag.params)
 
 
-def test_tareas_esperadas(dag):
-    assert set(dag.task_ids) == set(DEPENDENCIAS)
+def test_expected_tasks(dag):
+    assert set(dag.task_ids) == set(DEPENDENCIES)
 
 
-@pytest.mark.parametrize("tarea", sorted(DEPENDENCIAS))
-def test_dependencias(dag, tarea):
-    assert dag.get_task(tarea).upstream_task_ids == DEPENDENCIAS[tarea]
+@pytest.mark.parametrize("task", sorted(DEPENDENCIES))
+def test_dependencies(dag, task):
+    assert dag.get_task(task).upstream_task_ids == DEPENDENCIES[task]
 
 
-def test_el_pipeline_termina_en_la_entrega(dag):
+def test_pipeline_ends_at_delivery(dag):
     """Ninguna tarea queda colgada sin alimentar a nadie salvo la última."""
-    hojas = sorted(t.task_id for t in dag.tasks if not t.downstream_task_ids)
-    assert hojas == ["publish_csv"], f"el pipeline termina en {hojas}"
+    leaves = sorted(t.task_id for t in dag.tasks if not t.downstream_task_ids)
+    assert leaves == ["publish_csv"], f"the pipeline ends at {leaves}"

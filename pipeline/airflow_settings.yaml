@@ -9,7 +9,7 @@
 
 airflow:
   connections:
-    - conn_id: sismosapi
+    - conn_id: usgs_fdsn
       conn_type: http
       conn_host: earthquake.usgs.gov
       conn_schema: https

@@ -30,94 +30,94 @@ log = logging.getLogger(__name__)
 
 # El USGS publica las magnitudes en una grilla de 0.1 (con excepciones que se
 # redondean), y el binning entra en el cálculo de Mc.
-BIN_MAGNITUD = 0.1
+MAGNITUDE_BIN = 0.1
 
 # Valores estándar de la literatura. b ronda 1.0 en casi todo el mundo; d es el
 # que usan Zaliapin & Ben-Zion como dimensión fractal de los epicentros.
-B_ESTANDAR = 1.0
-D_ESTANDAR = 1.5
+B_STANDARD = 1.0
+D_STANDARD = 1.5
 
 # Máxima curvatura sabe subestimar Mc; ésta es la corrección empírica de
 # Woessner & Wiemer (2005).
-CORRECCION_MAXC = 0.2
+MAXC_CORRECTION = 0.2
 
 # Por debajo de esto no hay catálogo con el que trabajar.
-MIN_EVENTOS = 50  
+MIN_EVENTS = 50
 
 
 
-def recortar_a_mc(
-    sismos: pd.DataFrame, mc: float, bin_magnitud: float = BIN_MAGNITUD
+def trim_to_mc(
+    quakes: pd.DataFrame, mc: float, magnitude_bin: float = MAGNITUDE_BIN
 ) -> pd.DataFrame:
     """Se queda con los eventos completos, los de magnitud >= Mc."""
-    binneadas = np.round(sismos["mag"].to_numpy(dtype=float) / bin_magnitud)
-    return sismos[binneadas * bin_magnitud >= mc - bin_magnitud / 4]
+    binned = np.round(quakes["mag"].to_numpy(dtype=float) / magnitude_bin)
+    return quakes[binned * magnitude_bin >= mc - magnitude_bin / 4]
 
 
-def fmd(magnitudes: np.ndarray, bin_magnitud: float = BIN_MAGNITUD):
+def fmd(magnitudes: np.ndarray, magnitude_bin: float = MAGNITUDE_BIN):
     """Distribución de frecuencia-magnitud, no acumulada y acumulada.
 
     Devuelve los centros de bin, cuántos eventos caen en cada uno y cuántos hay
     de esa magnitud para arriba (que es la forma en que se escribe
     Gutenberg-Richter).
     """
-    m = np.round(magnitudes / bin_magnitud)
+    m = np.round(magnitudes / magnitude_bin)
     indices = (m - m.min()).astype(int)
-    no_acumulada = np.bincount(indices)
-    centros = np.round((m.min() + np.arange(len(no_acumulada))) * bin_magnitud, 4)
+    non_cumulative = np.bincount(indices)
+    centers = np.round((m.min() + np.arange(len(non_cumulative))) * magnitude_bin, 4)
 
     # Acumulada "de acá para arriba": se suma desde el final hacia atrás.
-    acumulada = np.cumsum(no_acumulada[::-1])[::-1]
+    cumulative = np.cumsum(non_cumulative[::-1])[::-1]
 
-    return centros, no_acumulada, acumulada
+    return centers, non_cumulative, cumulative
 
 
 def mc_maxc(
-    centros: np.ndarray,
-    no_acumulada: np.ndarray,
-    correccion: float = CORRECCION_MAXC,
+    centers: np.ndarray,
+    non_cumulative: np.ndarray,
+    correction: float = MAXC_CORRECTION,
 ) -> float:
     """Máxima curvatura: el bin más poblado de la FMD no acumulada.
 
     Es donde el catálogo deja de crecer y empieza a perder eventos: por encima
     de esa magnitud los registra a todos, por debajo se le escapan.
     """
-    return float(centros[int(np.argmax(no_acumulada))] + correccion)
+    return float(centers[int(np.argmax(non_cumulative))] + correction)
 
 
 def estimate(
-    sismos: pd.DataFrame,
-    bin_magnitud: float = BIN_MAGNITUD,
-    correccion_maxc: float = CORRECCION_MAXC,
-    min_eventos: int = MIN_EVENTOS,
+    quakes: pd.DataFrame,
+    magnitude_bin: float = MAGNITUDE_BIN,
+    maxc_correction: float = MAXC_CORRECTION,
+    min_events: int = MIN_EVENTS,
 ) -> dict:
     """Devuelve {mc, b, d} para el catálogo dado."""
-    magnitudes = sismos["mag"].to_numpy(dtype=float)
-    centros, no_acumulada, _ = fmd(magnitudes, bin_magnitud)
+    magnitudes = quakes["mag"].to_numpy(dtype=float)
+    centers, non_cumulative, _ = fmd(magnitudes, magnitude_bin)
 
-    mc = mc_maxc(centros, no_acumulada, correccion_maxc)
-    completos = recortar_a_mc(sismos, mc, bin_magnitud)
+    mc = mc_maxc(centers, non_cumulative, maxc_correction)
+    complete = trim_to_mc(quakes, mc, magnitude_bin)
 
-    if len(completos) < min_eventos:
+    if len(complete) < min_events:
         raise ValueError(
-            f"Sólo quedan {len(completos)} eventos por encima de Mc={mc:.2f} "
-            f"(mínimo {min_eventos}). Ampliá la ventana o bajá minmagnitude."
+            f"Only {len(complete)} events remain above Mc={mc:.2f} "
+            f"(minimum {min_events}). Widen the window or lower minmagnitude."
         )
 
     log.info(
-        "Mc=%.2f por máxima curvatura | %d eventos completos de %d | "
-        "b=%.1f y d=%.1f (estándar, no ajustados).",
+        "Mc=%.2f by maximum curvature | %d complete events out of %d | "
+        "b=%.1f and d=%.1f (standard, not fitted).",
         mc,
-        len(completos),
-        len(sismos),
-        B_ESTANDAR,
-        D_ESTANDAR,
+        len(complete),
+        len(quakes),
+        B_STANDARD,
+        D_STANDARD,
     )
 
     return {
         "mc": mc,
-        "b": B_ESTANDAR,
-        "d": D_ESTANDAR,
-        "n_eventos_catalogo": len(sismos),
-        "n_eventos_completos": len(completos),
+        "b": B_STANDARD,
+        "d": D_STANDARD,
+        "n_events_catalog": len(quakes),
+        "n_events_complete": len(complete),
     }

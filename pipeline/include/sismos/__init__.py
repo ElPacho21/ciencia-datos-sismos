@@ -5,18 +5,18 @@ from pathlib import Path
 OUTPUT_DIR = Path("/usr/local/airflow/include/output/detector_replicas_api")
 
 
-def _numero(valor) -> str:
+def _number(value) -> str:
     """Normaliza un número para el nombre de archivo.
 
     Los `Param` de tipo number llegan como float, así que sin esto una corrida
     con magnitud 3 y otra con 3.0 caerían en archivos distintos y ninguna
     reutilizaría la caché de la otra.
     """
-    numero = float(valor)
-    return str(int(numero)) if numero.is_integer() else str(numero)
+    number = float(value)
+    return str(int(number)) if number.is_integer() else str(number)
 
 
-def particion(
+def partition(
     starttime,
     endtime,
     minmagnitude,
@@ -34,24 +34,24 @@ def particion(
 
     Las capas que además dependen de la semilla se la agregan por su cuenta.
     """
-    nombre = "earthquake"
+    name = "earthquake"
 
     if starttime is not None:
-        nombre += f"_starttime={starttime}"
+        name += f"_starttime={starttime}"
 
     if endtime is not None:
-        nombre += f"_endtime={endtime}"
+        name += f"_endtime={endtime}"
 
     if minmagnitude is not None:
-        nombre += f"_minmagnitude={_numero(minmagnitude)}"
+        name += f"_minmagnitude={_number(minmagnitude)}"
 
     # El rectángulo va en un solo campo y no en cuatro: cuatro pares
     # `clave=valor` más hacen nombres larguísimos, y esto ya cuelga de rutas
     # con prefijo de capa y sufijo de semilla.
-    recorte = (minlatitude, maxlatitude, minlongitude, maxlongitude)
-    if any(borde is not None for borde in recorte):
-        nombre += "_bbox=" + ",".join(
-            "" if borde is None else _numero(borde) for borde in recorte
+    bbox = (minlatitude, maxlatitude, minlongitude, maxlongitude)
+    if any(edge is not None for edge in bbox):
+        name += "_bbox=" + ",".join(
+            "" if edge is None else _number(edge) for edge in bbox
         )
 
-    return nombre
+    return name

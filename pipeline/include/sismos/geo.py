@@ -9,14 +9,14 @@ from __future__ import annotations
 
 import numpy as np
 
-RADIO_TIERRA_KM = 6371.0
+EARTH_RADIUS_KM = 6371.0
 
 # Filas por bloque: la matriz completa de un catálogo de 20000 eventos son
 # 4e8 distancias, unos 3 GB como float64.
-CHUNK_DISTANCIAS = 256
+DISTANCE_CHUNK = 256
 
 
-def distancias_a_punto(
+def distances_to_point(
     lat_rad: np.ndarray, lon_rad: np.ndarray, lat0: float, lon0: float
 ) -> np.ndarray:
     """Haversine de un conjunto de epicentros contra uno solo, en km.
@@ -31,11 +31,11 @@ def distancias_a_punto(
         np.sin(dlat / 2) ** 2
         + np.cos(lat0) * np.cos(lat_rad) * np.sin(dlon / 2) ** 2
     )
-    return 2 * RADIO_TIERRA_KM * np.arcsin(np.sqrt(np.clip(a, 0.0, 1.0)))
+    return 2 * EARTH_RADIUS_KM * np.arcsin(np.sqrt(np.clip(a, 0.0, 1.0)))
 
 
-def distancias_epicentrales(
-    lat_rad: np.ndarray, lon_rad: np.ndarray, desde: int, hasta: int
+def epicentral_distances(
+    lat_rad: np.ndarray, lon_rad: np.ndarray, start: int, end: int
 ) -> np.ndarray:
     """Haversine de un bloque de filas contra todo el catálogo, en km.
 
@@ -46,12 +46,12 @@ def distancias_epicentrales(
     Las latitudes y longitudes entran ya en radianes para no repetir la
     conversión en cada bloque.
     """
-    lat_bloque = lat_rad[desde:hasta, None]
-    dlat = lat_bloque - lat_rad[None, :]
-    dlon = lon_rad[desde:hasta, None] - lon_rad[None, :]
+    lat_block = lat_rad[start:end, None]
+    dlat = lat_block - lat_rad[None, :]
+    dlon = lon_rad[start:end, None] - lon_rad[None, :]
 
     a = (
         np.sin(dlat / 2) ** 2
-        + np.cos(lat_bloque) * np.cos(lat_rad[None, :]) * np.sin(dlon / 2) ** 2
+        + np.cos(lat_block) * np.cos(lat_rad[None, :]) * np.sin(dlon / 2) ** 2
     )
-    return 2 * RADIO_TIERRA_KM * np.arcsin(np.sqrt(np.clip(a, 0.0, 1.0)))
+    return 2 * EARTH_RADIUS_KM * np.arcsin(np.sqrt(np.clip(a, 0.0, 1.0)))
