@@ -48,7 +48,17 @@ SEGUNDOS_POR_ANIO = 365.25 * 24 * 3600
 # siempre. Se pone un piso del orden del error de localización.
 R_MINIMO_KM = 0.01
 
-COLUMNAS_ARRASTRADAS = ("id", "time", "latitude", "longitude", "depth", "mag")
+# `place` no lo usa el método, pero es lo único legible por una persona que
+# tiene el catálogo: sin él el entregable se identifica sólo por ids del USGS.
+COLUMNAS_ARRASTRADAS = (
+    "id",
+    "time",
+    "latitude",
+    "longitude",
+    "depth",
+    "mag",
+    "place",
+)
 
 
 def vecinos_path(**consulta) -> Path:
@@ -148,7 +158,10 @@ def nearest_neighbor(
     t_reescalado = t_padre * escala**q
     r_reescalado = r_padre**d * escala**p
 
-    vecinos = catalogo[list(COLUMNAS_ARRASTRADAS)].copy()
+    # Se filtra por las que existen: `place` es opcional en silver.
+    vecinos = catalogo[
+        [c for c in COLUMNAS_ARRASTRADAS if c in catalogo.columns]
+    ].copy()
     vecinos["parent_id"] = np.where(hay_padre, catalogo["id"].to_numpy()[padre], None)
     vecinos["parent_mag"] = mag_padre
     vecinos["eta"] = eta

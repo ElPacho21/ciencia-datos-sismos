@@ -48,14 +48,27 @@ ALPHA_PLAUSIBLE = (0.5, 1.5)
 EXTENSION_MAXIMA_KM = 1500.0
 
 
-def eventos_path(seed, **consulta) -> Path:
+def eventos_path(seed, mainshock, **consulta) -> Path:
     """El catálogo evento por evento, con a qué cluster pertenece cada uno."""
-    return CLUSTERS_DIR / f"eventos_{particion(**consulta)}_seed={seed}.parquet"
+    return CLUSTERS_DIR / (
+        f"eventos_{particion(**consulta)}"
+        f"_mainshock={mainshock}_seed={seed}.parquet"
+    )
 
 
-def resumen_path(seed, **consulta) -> Path:
-    """Una fila por cluster: el entregable del pipeline."""
-    return CLUSTERS_DIR / f"resumen_{particion(**consulta)}_seed={seed}.parquet"
+def resumen_path(seed, mainshock, **consulta) -> Path:
+    """Una fila por cluster: el entregable del pipeline.
+
+    `mainshock` va en el nombre por el mismo motivo que la semilla: cambia los
+    números de la salida, así que dos corridas que difieren en él no pueden
+    compartir archivo. Y acá no sería sólo pisarse: esta tarea reutiliza lo que
+    ya está en disco si es más nuevo que su fuente, de modo que sin el nombre
+    distinto la segunda corrida devolvería los clusters de la primera.
+    """
+    return CLUSTERS_DIR / (
+        f"resumen_{particion(**consulta)}"
+        f"_mainshock={mainshock}_seed={seed}.parquet"
+    )
 
 
 def clusters_write(destino: Path, df: pd.DataFrame) -> None:
@@ -109,8 +122,10 @@ def build_clusters(clasificados: pd.DataFrame, definicion_mainshock: str = "mayo
 
     Difieren cuando la secuencia arranca con un premonitor: un M4.5 abre el
     árbol y tres horas después llega el M7. La raíz es el M4.5, pero el sismo
-    principal es el otro. El resumen guarda las dos cosas, así que se puede ver
-    en cuántos clusters discrepan.
+    principal es el otro. El resumen guarda las dos: `cluster_id` **es** el id
+    de la raíz —así se arma en `_asignar_clusters`— y `mainshock_id` el del
+    principal, de modo que `raiz_es_mainshock` dice en cuántos discrepan sin
+    repetir una columna.
     """
     if definicion_mainshock not in ("mayor", "raiz"):
         raise ValueError(
@@ -137,6 +152,8 @@ def build_clusters(clasificados: pd.DataFrame, definicion_mainshock: str = "mayo
     lat_rad = np.radians(eventos["latitude"].to_numpy(dtype=float))
     lon_rad = np.radians(eventos["longitude"].to_numpy(dtype=float))
 
+    hay_place = "place" in eventos.columns
+
     filas = []
     for cluster_id, grupo in eventos.groupby("cluster_id", sort=False):
         k = int(principal[cluster_id])
@@ -149,16 +166,30 @@ def build_clusters(clasificados: pd.DataFrame, definicion_mainshock: str = "mayo
             lat_rad[miembros], lon_rad[miembros], lat_rad[k], lon_rad[k]
         )
 
+        # La raíz sólo se usa para saber si coincide con el sismo principal: su
+        # id no se publica porque `cluster_id` ya *es* el id de la raíz.
         raiz = grupo.loc[grupo["generacion"] == 0, "id"].iloc[0]
 
-        filas.append(
+        fila = {
+            "cluster_id": cluster_id,
+            "mainshock_id": eventos["id"].iloc[k],
+        }
+
+        # Lo primero que mira una persona al abrir el csv. Va acá arriba, al lado
+        # de la clave, y no al final entre las métricas.
+        if hay_place:
+            fila["mainshock_place"] = eventos["place"].iloc[k]
+
+        fila.update(
             {
-                "cluster_id": cluster_id,
-                "mainshock_id": eventos["id"].iloc[k],
                 "mainshock_mag": float(eventos["mag"].iloc[k]),
                 "mainshock_time": momento,
                 "mainshock_lat": float(eventos["latitude"].iloc[k]),
                 "mainshock_lon": float(eventos["longitude"].iloc[k]),
+                # Predictor legítimo y hasta ahora ausente: la sismicidad
+                # superficial andina y la del slab profundo son poblaciones
+                # distintas, y producen réplicas de forma distinta.
+                "mainshock_depth": float(eventos["depth"].iloc[k]),
                 "n_eventos": int(len(grupo)),
                 # Todo lo que no es el sismo principal ni le antecede.
                 "n_replicas": int(len(grupo) - 1 - premonitores),
@@ -168,16 +199,33 @@ def build_clusters(clasificados: pd.DataFrame, definicion_mainshock: str = "mayo
                 ),
                 "extension_km": float(distancias.max()),
                 "generacion_max": int(grupo["generacion"].max()),
-                "raiz_id": raiz,
                 "raiz_es_mainshock": bool(raiz == eventos["id"].iloc[k]),
             }
         )
+        filas.append(fila)
 
     resumen = (
         pd.DataFrame(filas)
         .sort_values("n_replicas", ascending=False)
         .reset_index(drop=True)
     )
+
+    # El conteo de réplicas se calcula por cluster, pero la pregunta "¿cuántas
+    # réplicas produjo *este* sismo?" se hace evento por evento. Sin estas dos
+    # columnas hay que cruzar las dos tablas a mano por `cluster_id`, que es
+    # justo el paso donde se cuelan los errores.
+    replicas_por_cluster = resumen.set_index("cluster_id")["n_replicas"]
+
+    # Las de la secuencia entera: igual para todos los miembros del cluster.
+    eventos["n_replicas_secuencia"] = (
+        eventos["cluster_id"].map(replicas_por_cluster).astype(int)
+    )
+
+    # Las que produjo este evento: sólo el sismo principal las "produce", así
+    # que para las réplicas y los premonitores vale 0.
+    eventos["n_replicas"] = np.where(
+        eventos["is_mainshock"], eventos["n_replicas_secuencia"], 0
+    ).astype(int)
 
     con_replicas = resumen[resumen["n_replicas"] > 0]
     discrepan = int((~resumen["raiz_es_mainshock"]).sum())

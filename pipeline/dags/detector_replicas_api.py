@@ -331,7 +331,11 @@ def detector_replicas_api():
     def build_clusters(replicas_ruta: str, **context) -> dict[str, str]:
         params = context["params"]
 
-        claves = {"seed": params["seed"], **consulta(params)}
+        claves = {
+            "seed": params["seed"],
+            "mainshock": params["mainshock"],
+            **consulta(params),
+        }
         destino_eventos = clusters.eventos_path(**claves)
         destino_resumen = clusters.resumen_path(**claves)
         fuente = Path(replicas_ruta)
@@ -375,7 +379,11 @@ def detector_replicas_api():
         alguien ya construyó algo encima.
         """
         params = context["params"]
-        claves = {"seed": params["seed"], **consulta(params)}
+        claves = {
+            "seed": params["seed"],
+            "mainshock": params["mainshock"],
+            **consulta(params),
+        }
 
         destinos = {
             "dataset": str(entrega.dataset_path(**claves)),

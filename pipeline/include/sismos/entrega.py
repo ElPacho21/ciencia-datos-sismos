@@ -41,14 +41,23 @@ MIN_FILAS = 1000
 MIN_COLUMNAS = 5
 
 
-def dataset_path(seed, **consulta) -> Path:
-    """El entregable: una fila por cluster."""
-    return ENTREGA_DIR / f"clusters_{particion(**consulta)}_seed={seed}.csv"
+def dataset_path(seed, mainshock, **consulta) -> Path:
+    """El entregable: una fila por cluster.
+
+    `mainshock` entra en el nombre igual que la semilla: es una decisión de
+    método que cambia los números, y las dos versiones se quieren lado a lado
+    para poder compararlas, no una encima de la otra.
+    """
+    return ENTREGA_DIR / (
+        f"clusters_{particion(**consulta)}_mainshock={mainshock}_seed={seed}.csv"
+    )
 
 
-def eventos_path(seed, **consulta) -> Path:
+def eventos_path(seed, mainshock, **consulta) -> Path:
     """El catálogo evento por evento, con su cluster."""
-    return ENTREGA_DIR / f"eventos_{particion(**consulta)}_seed={seed}.csv"
+    return ENTREGA_DIR / (
+        f"eventos_{particion(**consulta)}_mainshock={mainshock}_seed={seed}.csv"
+    )
 
 
 def escribir_csv(destino: Path, df: pd.DataFrame) -> None:
