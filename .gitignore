@@ -1,0 +1,10 @@
+# El venv para trabajar los notebooks NO vive dentro del repo (ver
+# requirements-notebooks.txt): una política de Application Control de Windows
+# bloquea las DLL compiladas (numpy, etc.) para cualquier venv creado bajo
+# C:\Cursos\..., así que queda en %LOCALAPPDATA%\venvs\ciencia-datos-sismos.
+# Esta entrada es sólo por si algún día se puede crear localmente.
+.venv/
+
+# Checkpoints de Jupyter.
+.ipynb_checkpoints/
+notebooks/.ipynb_checkpoints/

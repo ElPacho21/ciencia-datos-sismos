@@ -7,6 +7,11 @@ con el método del vecino más cercano de Zaliapin & Ben-Zion.
 Para levantar el pipeline: [`pipeline/README.md`](pipeline/README.md). Este
 archivo explica **qué hace cada paso y por qué está ahí**.
 
+Para el análisis exploratorio sobre el CSV ya publicado: `notebooks/`. Usa un
+entorno aparte del pipeline — ver el comentario al principio de
+`requirements-notebooks.txt` para armarlo (incluye una nota sobre por qué el
+venv no vive dentro del repo en Windows).
+
 ## El problema
 
 Un catálogo sísmico es una lista plana: fecha, lugar, magnitud. Pero los
@@ -230,8 +235,8 @@ premonitores, duración y extensión.
 **Quién es el sismo principal** es una decisión, no un detalle. `largest` toma
 el de mayor magnitud (lo que usan Zaliapin & Ben-Zion) y `root` el que disparó
 la secuencia. Difieren cuando hubo premonitores: un M4.5 abre el árbol y tres
-horas después llega el M7. En la corrida de referencia discrepan en el 4.6% de
-los clusters.
+horas después llega el M7. En la corrida de referencia discrepan en 42
+clusters (2.1%).
 
 ### `publish_csv` → el entregable, y dudar de él
 
@@ -339,7 +344,7 @@ que quedan por debajo de Mc se descartan, y está bien que así sea.
 **La productividad reproduce la ley de Utsu.** Es el único control contra un
 hecho externo, y no contra un sintético fabricado acá: el número medio de
 réplicas por bin de magnitud sube de forma limpia y el exponente cae dentro del
-rango que se observa en el mundo. Que R² dé 0.996 dice que los conteos por
+rango que se observa en el mundo. Que R² dé 0.991 dice que los conteos por
 magnitud son coherentes entre sí.
 
 **Todavía hay clusters imposibles.** Dos se extienden más de 1500 km, el mayor

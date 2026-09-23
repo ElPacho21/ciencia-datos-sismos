@@ -1,0 +1,22 @@
+# Dependencias para trabajar los notebooks de EDA/entregas (Entrega 2 en
+# adelante). Entorno separado del pipeline: acá se analiza el CSV ya
+# publicado, no se importa `sismos`.
+#
+# El venv NO se crea dentro del repo: en esta máquina una política de
+# Application Control de Windows bloquea las DLL compiladas (numpy, scipy...)
+# para cualquier venv bajo C:\Cursos\..., aunque el pip install termine "ok".
+# Se crea afuera y el kernel de Jupyter apunta ahí:
+#
+#   python -m venv "$env:LOCALAPPDATA\venvs\ciencia-datos-sismos"
+#   & "$env:LOCALAPPDATA\venvs\ciencia-datos-sismos\Scripts\python.exe" -m pip install -r requirements-notebooks.txt
+#   & "$env:LOCALAPPDATA\venvs\ciencia-datos-sismos\Scripts\python.exe" -m ipykernel install --user --name=sismos-entrega2 --display-name="sismos (entrega2)"
+#
+# En el notebook (o VS Code), elegir el kernel "sismos (entrega2)".
+pandas>=2.2
+numpy>=1.26
+scipy>=1.13
+matplotlib>=3.8
+seaborn>=0.13
+jupyter>=1.0
+ipykernel>=6.29
+nbconvert>=7.16
