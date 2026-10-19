@@ -41,8 +41,8 @@ MIN_SEPARATION = 1.5
 MIN_WEIGHT = 0.05
 
 
-def threshold_path(**query) -> Path:
-    return THRESHOLD_DIR / f"{partition(**query)}.json"
+def threshold_path(method="", **query) -> Path:
+    return THRESHOLD_DIR / f"{partition(**query)}{method}.json"
 
 
 def threshold_write(destination: Path, threshold: dict) -> None:

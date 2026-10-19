@@ -20,7 +20,15 @@ w/ config*. Los parámetros de la consulta son `starttime`, `endtime`,
 (por defecto Argentina continental; los cuatro en null consultan el planeta) y
 `limit` (un tope de seguridad: si el rango empareja más sismos que eso la corrida
 falla en vez de truncar; `0` es sin tope). Del método salen `mainshock`
-(`largest`/`root`), `seed` y `n_randomizations`. Y `force` ignora todo lo ya
+(`largest`/`root`), `seed` y `n_randomizations`.
+`r_max_km` (por defecto `null`, sin tope) fija la distancia epicentral máxima
+entre padre e hijo: un par más lejos no puede ser padre-hijo, y un evento sin
+candidato dentro del radio queda como raíz (`eta` en NaN). `r_max_mode="gk"`
+usa un radio que depende de la magnitud del padre, `r_max_k · 10^(0.1238·M + 0.983)` km
+(Gardner-Knopoff), y `r_max_km` pasa a ser un techo absoluto opcional. El mismo
+tope se aplica al catálogo nulo. Si está activo, aparece en el nombre de los
+archivos desde `neighbors/` en adelante (`_rmax=300`, `_rmax=gk3`); sin tope los
+nombres son los de siempre. Y `force` ignora todo lo ya
 persistido y recalcula de cero.
 
 La ventana tiene que ser **larga**. El método necesita al menos 50 eventos por

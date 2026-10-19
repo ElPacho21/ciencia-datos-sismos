@@ -57,17 +57,20 @@ AFTERSHOCKS_DIR = OUTPUT_DIR / "aftershocks"
 MIN_EXCESS = 0.05
 
 
-def null_path(seed, n_repetitions, **query) -> Path:
+def null_path(seed, n_repetitions, method="", **query) -> Path:
     """El nulo depende de la semilla y de cuántas veces se barajó.
 
     Los dos van en el nombre y no adentro del archivo: así dos corridas con
     distinta semilla conviven en disco y se ve de un vistazo cuál es cuál.
     """
-    return NULL_DIR / f"{partition(**query)}_seed={seed}_reps={n_repetitions}.parquet"
+    return (
+        NULL_DIR
+        / f"{partition(**query)}{method}_seed={seed}_reps={n_repetitions}.parquet"
+    )
 
 
-def aftershocks_path(seed, **query) -> Path:
-    return AFTERSHOCKS_DIR / f"{partition(**query)}_seed={seed}.parquet"
+def aftershocks_path(seed, method="", **query) -> Path:
+    return AFTERSHOCKS_DIR / f"{partition(**query)}{method}_seed={seed}.parquet"
 
 
 def null_write(destination: Path, df: pd.DataFrame) -> None:
@@ -111,6 +114,9 @@ def randomize_catalog(
     n_repetitions: int = 5,
     seed: int = 0,
     magnitude_bin: float = MAGNITUDE_BIN,
+    r_max_km: float | None = None,
+    r_max_mode: str = "fixed",
+    r_max_k: float = 3.0,
 ) -> pd.DataFrame:
     """Distribución nula de log10(eta): el catálogo barajado, varias veces.
 
@@ -118,6 +124,9 @@ def randomize_catalog(
     Con pocas repeticiones el nulo queda ruidoso; con muchas, el paso se vuelve
     la parte cara del pipeline. Cinco alcanza para catálogos de unos pocos miles
     de eventos.
+
+    Recibe el mismo tope de distancia padre-hijo que el catálogo real: si el
+    real se busca con radio y el nulo sin él, el contraste deja de ser justo.
     """
     if n_repetitions < 1:
         raise ValueError("At least one repetition is needed to build the null.")
@@ -128,7 +137,14 @@ def randomize_catalog(
     chunks = []
     for repetition in range(n_repetitions):
         shuffled = nearest_neighbor(
-            _shuffle(catalog, rng), b=b, d=d, mc=mc, magnitude_bin=magnitude_bin
+            _shuffle(catalog, rng),
+            b=b,
+            d=d,
+            mc=mc,
+            magnitude_bin=magnitude_bin,
+            r_max_km=r_max_km,
+            r_max_mode=r_max_mode,
+            r_max_k=r_max_k,
         )
         values = shuffled["log10_eta"].dropna().to_numpy()
         chunks.append(

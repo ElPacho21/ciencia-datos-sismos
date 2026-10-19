@@ -35,7 +35,12 @@ import numpy as np
 import pandas as pd
 
 from sismos import OUTPUT_DIR, partition
-from sismos.geo import DISTANCE_CHUNK, epicentral_distances
+from sismos.geo import (
+    DISTANCE_CHUNK,
+    EARTH_RADIUS_KM,
+    distances_to_point,
+    epicentral_distances,
+)
 from sismos.parameters import MAGNITUDE_BIN, trim_to_mc
 
 log = logging.getLogger(__name__)
@@ -61,8 +66,14 @@ CARRIED_COLUMNS = (
 )
 
 
-def neighbors_path(**query) -> Path:
-    return NEIGHBORS_DIR / f"{partition(**query)}.parquet"
+# Gardner-Knopoff: el radio de la zona de réplicas de un sismo de magnitud M es
+# 10^(0.1238·M + 0.983) km. El modo "gk" lo multiplica por `r_max_k`.
+GK_SLOPE = 0.1238
+GK_INTERCEPT = 0.983
+
+
+def neighbors_path(method="", **query) -> Path:
+    return NEIGHBORS_DIR / f"{partition(**query)}{method}.parquet"
 
 
 def neighbors_write(destination: Path, df: pd.DataFrame) -> None:
@@ -74,52 +85,102 @@ def neighbors_read(path: Path) -> pd.DataFrame:
     return pd.read_parquet(path)
 
 
-def nearest_neighbor(
-    quakes: pd.DataFrame,
-    b: float,
-    d: float,
-    mc: float,
-    p: float = 0.5,
-    magnitude_bin: float = MAGNITUDE_BIN,
-    r_min_km: float = R_MIN_KM,
-    chunk: int = DISTANCE_CHUNK,
-) -> pd.DataFrame:
-    """Le asigna a cada evento el padre que minimiza eta.
+def gardner_knopoff_km(magnitude) -> np.ndarray:
+    """Radio de la zona de réplicas de Gardner-Knopoff, en km."""
+    return 10.0 ** (GK_SLOPE * np.asarray(magnitude, dtype=float) + GK_INTERCEPT)
 
-    `quakes` tiene que venir de silver (ordenado por tiempo); acá se recorta a
-    Mc antes de buscar nada, porque un evento incompleto no puede ser padre
-    válido de nadie.
 
-    `p` reparte el peso de la magnitud entre las dos mitades reescaladas:
-    p = q = 0.5 es lo que usan Zaliapin & Ben-Zion y hace que las dos nubes del
-    plano (T, R) queden a 45 grados.
+def _parent_radii(magnitudes, r_max_km, r_max_mode, r_max_k):
+    """Radio máximo (km) dentro del que cada evento puede ser padre.
+
+    Devuelve `None` si no hay tope. En modo "fixed" es el mismo para todos; en
+    "gk" depende de la magnitud del *padre*, igual que la métrica: un sismo
+    grande reclama más lejos. Si además se da `r_max_km` en modo "gk", actúa
+    como techo absoluto.
     """
-    if not 0.0 <= p <= 1.0:
-        raise ValueError(f"p must be between 0 and 1, got {p}.")
+    if r_max_mode not in ("fixed", "gk"):
+        raise ValueError(f"Unknown r_max_mode: {r_max_mode!r}. Use 'fixed' or 'gk'.")
+    if r_max_km is not None and r_max_km <= 0:
+        raise ValueError(f"r_max_km must be positive, got {r_max_km}.")
 
-    catalog = trim_to_mc(quakes, mc, magnitude_bin).reset_index(drop=True)
-    n = len(catalog)
-    if n < 2:
-        raise ValueError(f"Only {n} events remain above Mc={mc}: no pairs.")
+    if r_max_mode == "gk":
+        if r_max_k <= 0:
+            raise ValueError(f"r_max_k must be positive, got {r_max_k}.")
+        radii = r_max_k * gardner_knopoff_km(magnitudes)
+        return radii if r_max_km is None else np.minimum(radii, r_max_km)
 
-    if not catalog["time"].is_monotonic_increasing:
-        raise ValueError("The catalog must be sorted by time.")
+    if r_max_km is None:
+        return None
+    return np.full(len(magnitudes), float(r_max_km))
 
-    lat_rad = np.radians(catalog["latitude"].to_numpy(dtype=float))
-    lon_rad = np.radians(catalog["longitude"].to_numpy(dtype=float))
-    magnitudes = catalog["mag"].to_numpy(dtype=float)
 
-    # Tiempo en años desde el primer evento: eta se define con t en años, y
-    # trabajar en absoluto evita restar timestamps adentro del bucle.
-    times = (
-        (catalog["time"] - catalog["time"].iloc[0]).dt.total_seconds().to_numpy()
-        / SECONDS_PER_YEAR
-    )
+def _search_within_radius(
+    lat_rad, lon_rad, times, parent_weight, radii_km, d, r_min_km, chunk
+):
+    """Padre de cada evento buscando sólo entre los que caen dentro del radio.
 
-    # 10^(-b*m) del *padre*: es constante por evento, así que se calcula una
-    # sola vez y se reusa en todos los bloques.
-    parent_weight = 10.0 ** (-b * magnitudes)
+    Un `BallTree` con métrica haversine trae, para cada hijo, los eventos a
+    menos del radio máximo; después se filtra el que el padre sí alcanza y se
+    minimiza eta igual que en la búsqueda completa. Las distancias de los
+    candidatos se recalculan con `distances_to_point` (la misma fórmula que
+    `epicentral_distances`) para que, con un radio que lo abarque todo, el
+    resultado sea idéntico al de la búsqueda sin tope.
+    """
+    from sklearn.neighbors import BallTree
 
+    n = len(times)
+    parent = np.full(n, -1, dtype=int)
+    eta = np.full(n, np.nan)
+    t_parent = np.full(n, np.nan)
+    r_parent = np.full(n, np.nan)
+
+    coordinates = np.column_stack([lat_rad, lon_rad])
+    tree = BallTree(coordinates, metric="haversine")
+    # Un poco de margen: el filtro exacto lo hace `radii_km` más abajo, y esto
+    # sólo evita que el árbol deje afuera un candidato por redondeo.
+    query_radius = float(radii_km.max()) * (1 + 1e-9) / EARTH_RADIUS_KM
+
+    for start in range(0, n, chunk):
+        end = min(start + chunk, n)
+        found = tree.query_radius(coordinates[start:end], r=query_radius)
+
+        for offset, indices in enumerate(found):
+            j = start + offset
+            # Ordenados, para que ante un empate gane el primero como en argmin.
+            candidates = np.sort(indices)
+            dt = times[j] - times[candidates]
+            earlier = dt > 0
+            candidates, dt = candidates[earlier], dt[earlier]
+            if candidates.size == 0:
+                continue
+
+            distances = distances_to_point(
+                lat_rad[candidates], lon_rad[candidates], lat_rad[j], lon_rad[j]
+            )
+            reachable = distances <= radii_km[candidates]
+            if not reachable.any():
+                continue
+
+            candidates, dt, distances = (
+                candidates[reachable],
+                dt[reachable],
+                distances[reachable],
+            )
+            r = np.maximum(distances, r_min_km)
+            values = dt * r**d * parent_weight[candidates]
+
+            best = int(np.argmin(values))
+            parent[j] = candidates[best]
+            eta[j] = values[best]
+            t_parent[j] = dt[best]
+            r_parent[j] = r[best]
+
+    return parent, eta, t_parent, r_parent
+
+
+def _search_everywhere(lat_rad, lon_rad, times, parent_weight, d, r_min_km, chunk):
+    """Búsqueda sin tope: cada evento contra todos los anteriores, por bloques."""
+    n = len(times)
     parent = np.full(n, -1, dtype=int)
     eta = np.full(n, np.nan)
     t_parent = np.full(n, np.nan)
@@ -147,6 +208,77 @@ def nearest_neighbor(
         eta[indices] = best[has_parent]
         t_parent[indices] = dt[rows, chosen][has_parent]
         r_parent[indices] = r[rows, chosen][has_parent]
+
+    return parent, eta, t_parent, r_parent
+
+
+def nearest_neighbor(
+    quakes: pd.DataFrame,
+    b: float,
+    d: float,
+    mc: float,
+    p: float = 0.5,
+    magnitude_bin: float = MAGNITUDE_BIN,
+    r_min_km: float = R_MIN_KM,
+    chunk: int = DISTANCE_CHUNK,
+    r_max_km: float | None = None,
+    r_max_mode: str = "fixed",
+    r_max_k: float = 3.0,
+) -> pd.DataFrame:
+    """Le asigna a cada evento el padre que minimiza eta.
+
+    `quakes` tiene que venir de silver (ordenado por tiempo); acá se recorta a
+    Mc antes de buscar nada, porque un evento incompleto no puede ser padre
+    válido de nadie.
+
+    `p` reparte el peso de la magnitud entre las dos mitades reescaladas:
+    p = q = 0.5 es lo que usan Zaliapin & Ben-Zion y hace que las dos nubes del
+    plano (T, R) queden a 45 grados.
+
+    `r_max_km` pone un tope a la distancia epicentral padre-hijo: un par más
+    lejos que eso no puede ser padre-hijo, y un evento sin ningún candidato
+    dentro del radio queda como raíz (`eta` en NaN, igual que los primeros del
+    catálogo). Sin tope, un sismo grande puede "reclamar" hijos a miles de km.
+    `r_max_mode="gk"` usa un radio que depende de la magnitud del padre,
+    `r_max_k · 10^(0.1238·M + 0.983)` km. Con `r_max_km=None` y modo "fixed" se
+    busca entre todos, como siempre.
+    """
+    if not 0.0 <= p <= 1.0:
+        raise ValueError(f"p must be between 0 and 1, got {p}.")
+
+    catalog = trim_to_mc(quakes, mc, magnitude_bin).reset_index(drop=True)
+    n = len(catalog)
+    if n < 2:
+        raise ValueError(f"Only {n} events remain above Mc={mc}: no pairs.")
+
+    if not catalog["time"].is_monotonic_increasing:
+        raise ValueError("The catalog must be sorted by time.")
+
+    lat_rad = np.radians(catalog["latitude"].to_numpy(dtype=float))
+    lon_rad = np.radians(catalog["longitude"].to_numpy(dtype=float))
+    magnitudes = catalog["mag"].to_numpy(dtype=float)
+
+    # Tiempo en años desde el primer evento: eta se define con t en años, y
+    # trabajar en absoluto evita restar timestamps adentro del bucle.
+    times = (
+        (catalog["time"] - catalog["time"].iloc[0]).dt.total_seconds().to_numpy()
+        / SECONDS_PER_YEAR
+    )
+
+    # 10^(-b*m) del *padre*: es constante por evento, así que se calcula una
+    # sola vez y se reusa en todos los bloques.
+    parent_weight = 10.0 ** (-b * magnitudes)
+
+    radii = _parent_radii(magnitudes, r_max_km, r_max_mode, r_max_k)
+
+    if radii is None:
+        parent, eta, t_parent, r_parent = _search_everywhere(
+            lat_rad, lon_rad, times, parent_weight, d, r_min_km, chunk
+        )
+    else:
+        parent, eta, t_parent, r_parent = _search_within_radius(
+            lat_rad, lon_rad, times, parent_weight, radii, d, r_min_km, chunk
+        )
 
     parented = parent >= 0
     parent_mag = np.where(parented, magnitudes[parent], np.nan)

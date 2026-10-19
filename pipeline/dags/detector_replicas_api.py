@@ -26,7 +26,7 @@ from airflow.sdk import Param, dag, task
 
 # Se importan los módulos enteros porque varias tareas del DAG se llaman igual
 # que la función que las hace, y de otro modo una taparía a la otra.
-from sismos import aftershocks, clusters, delivery, neighbors
+from sismos import aftershocks, clusters, delivery, method_suffix, neighbors
 from sismos.bronze import bronze_load, bronze_path, bronze_write
 from sismos.parameters import estimate
 from sismos.silver import refine, silver_path, silver_read, silver_write
@@ -152,6 +152,39 @@ log = logging.getLogger(__name__)
             minimum=1,
             maximum=50,
         ),
+        # El tope de distancia padre-hijo. Sin él, un sismo grande "reclama" hijos
+        # a miles de km y el árbol encadena regiones que no tienen relación.
+        "r_max_km": Param(
+            None,
+            type=["number", "null"],
+            title="Parent-child distance cap (km)",
+            description=(
+                "A pair of events farther apart than this cannot be "
+                "parent-child. Null means no cap (the original behavior). In "
+                "'gk' mode it is an absolute ceiling on top of the "
+                "magnitude-dependent radius."
+            ),
+            minimum=1,
+        ),
+        "r_max_mode": Param(
+            "fixed",
+            type="string",
+            enum=["fixed", "gk"],
+            title="Distance cap mode",
+            description=(
+                "'fixed' uses r_max_km for every parent. 'gk' uses "
+                "r_max_k * 10^(0.1238*M + 0.983) km, where M is the parent's "
+                "magnitude (Gardner-Knopoff), and it is active even if "
+                "r_max_km is null."
+            ),
+        ),
+        "r_max_k": Param(
+            3.0,
+            type="number",
+            title="Gardner-Knopoff multiplier",
+            description="Only used when the cap mode is 'gk'.",
+            minimum=0.1,
+        ),
         "force": Param(
             False,
             type="boolean",
@@ -177,6 +210,18 @@ def detector_replicas_api():
                 "maxlongitude",
             )
         }
+
+    def radius(params) -> dict:
+        """Los argumentos del tope de distancia, tal como los toma neighbors."""
+        return {
+            "r_max_km": params["r_max_km"],
+            "r_max_mode": params["r_max_mode"],
+            "r_max_k": params["r_max_k"],
+        }
+
+    def method(params) -> str:
+        """Sufijo de nombre de los archivos que dependen del tope."""
+        return method_suffix(**radius(params))
 
     @task
     def land_bronze(**context) -> str:
@@ -217,7 +262,7 @@ def detector_replicas_api():
     def nearest_neighbor(silver_file: str, parameters: dict, **context) -> str:
         params = context["params"]
 
-        destination = neighbors.neighbors_path(**query(params))
+        destination = neighbors.neighbors_path(method=method(params), **query(params))
         source = Path(silver_file)
 
         if (
@@ -233,6 +278,7 @@ def detector_replicas_api():
             b=parameters["b"],
             d=parameters["d"],
             mc=parameters["mc"],
+            **radius(params),
         )
         neighbors.neighbors_write(destination, paired)
         return str(destination)
@@ -241,7 +287,7 @@ def detector_replicas_api():
     def fit_eta_threshold(neighbors_file: str, **context) -> str:
         params = context["params"]
 
-        destination = threshold_path(**query(params))
+        destination = threshold_path(method=method(params), **query(params))
         source = Path(neighbors_file)
 
         if (
@@ -263,6 +309,7 @@ def detector_replicas_api():
         destination = aftershocks.null_path(
             seed=params["seed"],
             n_repetitions=params["n_randomizations"],
+            method=method(params),
             **query(params),
         )
         source = Path(silver_file)
@@ -284,6 +331,7 @@ def detector_replicas_api():
             mc=parameters["mc"],
             n_repetitions=params["n_randomizations"],
             seed=params["seed"],
+            **radius(params),
         )
         aftershocks.null_write(destination, null)
         return str(destination)
@@ -292,7 +340,9 @@ def detector_replicas_api():
     def thinning(neighbors_file: str, null_file: str, threshold_file: str, **context) -> str:
         params = context["params"]
 
-        destination = aftershocks.aftershocks_path(seed=params["seed"], **query(params))
+        destination = aftershocks.aftershocks_path(
+            seed=params["seed"], method=method(params), **query(params)
+        )
         sources = [Path(neighbors_file), Path(null_file), Path(threshold_file)]
 
         if (
@@ -333,6 +383,7 @@ def detector_replicas_api():
         keys = {
             "seed": params["seed"],
             "mainshock": params["mainshock"],
+            "method": method(params),
             **query(params),
         }
         destination_events = clusters.events_path(**keys)
@@ -381,6 +432,7 @@ def detector_replicas_api():
         keys = {
             "seed": params["seed"],
             "mainshock": params["mainshock"],
+            "method": method(params),
             **query(params),
         }
 

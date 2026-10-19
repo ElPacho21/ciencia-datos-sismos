@@ -41,7 +41,7 @@ MIN_ROWS = 1000
 MIN_COLUMNS = 5
 
 
-def dataset_path(seed, mainshock, **query) -> Path:
+def dataset_path(seed, mainshock, method="", **query) -> Path:
     """El entregable: una fila por cluster.
 
     `mainshock` entra en el nombre igual que la semilla: es una decisión de
@@ -49,14 +49,14 @@ def dataset_path(seed, mainshock, **query) -> Path:
     para poder compararlas, no una encima de la otra.
     """
     return DELIVERY_DIR / (
-        f"clusters_{partition(**query)}_mainshock={mainshock}_seed={seed}.csv"
+        f"clusters_{partition(**query)}{method}_mainshock={mainshock}_seed={seed}.csv"
     )
 
 
-def events_path(seed, mainshock, **query) -> Path:
+def events_path(seed, mainshock, method="", **query) -> Path:
     """El catálogo evento por evento, con su cluster."""
     return DELIVERY_DIR / (
-        f"events_{partition(**query)}_mainshock={mainshock}_seed={seed}.csv"
+        f"events_{partition(**query)}{method}_mainshock={mainshock}_seed={seed}.csv"
     )
 
 

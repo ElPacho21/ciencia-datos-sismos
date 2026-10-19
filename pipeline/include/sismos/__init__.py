@@ -16,6 +16,30 @@ def _number(value) -> str:
     return str(int(number)) if number.is_integer() else str(number)
 
 
+def method_suffix(r_max_km=None, r_max_mode="fixed", r_max_k=3.0) -> str:
+    """Sufijo de nombre para los parámetros del *método* que cambian la salida.
+
+    `partition()` identifica los datos de entrada y lo comparten bronze y
+    silver; el tope de distancia padre-hijo recién actúa desde el vecino más
+    cercano, así que no puede colarse ahí o se duplicaría el catálogo crudo.
+
+    Con los valores por defecto (sin tope) devuelve `""`: los nombres de la
+    corrida de referencia quedan idénticos a los de antes.
+    """
+    if r_max_mode not in ("fixed", "gk"):
+        raise ValueError(f"Unknown r_max_mode: {r_max_mode!r}. Use 'fixed' or 'gk'.")
+
+    if r_max_mode == "gk":
+        suffix = f"_rmax=gk{_number(r_max_k)}"
+        if r_max_km is not None:
+            suffix += f"-cap{_number(r_max_km)}"
+        return suffix
+
+    if r_max_km is None:
+        return ""
+    return f"_rmax={_number(r_max_km)}"
+
+
 def partition(
     starttime,
     endtime,

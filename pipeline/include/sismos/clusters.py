@@ -48,15 +48,15 @@ ALPHA_PLAUSIBLE = (0.5, 1.5)
 MAX_EXTENT_KM = 1500.0
 
 
-def events_path(seed, mainshock, **query) -> Path:
+def events_path(seed, mainshock, method="", **query) -> Path:
     """El catálogo evento por evento, con a qué cluster pertenece cada uno."""
     return CLUSTERS_DIR / (
-        f"events_{partition(**query)}"
+        f"events_{partition(**query)}{method}"
         f"_mainshock={mainshock}_seed={seed}.parquet"
     )
 
 
-def summary_path(seed, mainshock, **query) -> Path:
+def summary_path(seed, mainshock, method="", **query) -> Path:
     """Una fila por cluster: el entregable del pipeline.
 
     `mainshock` va en el nombre por el mismo motivo que la semilla: cambia los
@@ -66,7 +66,7 @@ def summary_path(seed, mainshock, **query) -> Path:
     distinto la segunda corrida devolvería los clusters de la primera.
     """
     return CLUSTERS_DIR / (
-        f"summary_{partition(**query)}"
+        f"summary_{partition(**query)}{method}"
         f"_mainshock={mainshock}_seed={seed}.parquet"
     )
 
