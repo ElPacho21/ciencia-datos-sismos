@@ -233,6 +233,30 @@ la secuencia. Difieren cuando hubo premonitores: un M4.5 abre el árbol y tres
 horas después llega el M7. En la corrida de referencia discrepan en el 4.6% de
 los clusters.
 
+### `build_features` → columnas que existirían al predecir
+
+El resumen describía cada secuencia casi sólo con `mainshock_mag` y
+`mainshock_depth`; casi todo lo demás (`n_events`, `n_foreshocks`,
+`duration_days`, `extent_km`…) se conoce recién cuando la secuencia terminó, o
+sea que es fuga si el objetivo es `n_aftershocks`. Esta tarea suma, **al final**
+de `clusters_*.csv` y sin tocar las columnas anteriores, lo que sí se sabía en
+el instante del sismo principal:
+
+- **Sismicidad previa** en una vecindad del epicentro (`prior_radius_km`, 100 km
+  por defecto): cuántos eventos ≥ Mc hubo en los 2, 30 y 365 días anteriores, la
+  mayor magnitud del último año y los días desde el más reciente. Se calcula
+  sobre silver con un `BallTree` haversine, así que no depende del declustering.
+- **Contexto de la región** (`region_mc`, `region_log10_eta0`), que importa cuando
+  se concatenan varias regiones con Mc y umbral propios.
+- **`has_aftershock`** (`n_aftershocks > 0`), el objetivo de clasificación: el 93%
+  de las secuencias tiene cero réplicas y predecir *si habrá* es un problema
+  distinto —y más tratable— que predecir *cuántas*.
+
+Los nulos de `prior_max_mag_365d` y `days_since_prior` son **estructurales**: no
+hubo ningún evento previo en la vecindad. `prior_window_truncated` marca las
+secuencias cuya ventana de 365 días arranca antes que el catálogo: sus conteos
+son un piso, no el valor real.
+
 ### `publish_csv` → el entregable, y dudar de él
 
 Las capas anteriores escriben parquet: se leen entre tareas y ya vienen
@@ -278,6 +302,12 @@ objetivo de cada uno ya están en la tabla de más arriba; acá está el resto.
 | `extent_km` | Máxima distancia epicentral entre el sismo principal y sus eventos. |
 | `max_generation` | Cuántas réplicas se encadenan una tras otra (profundidad del árbol). |
 | `root_is_mainshock` | Si el id de la raíz coincide con el del sismo principal. Discrepan cuando hubo premonitores. |
+| `n_prior_2d` / `n_prior_30d` / `n_prior_365d` | Eventos ≥ Mc a menos de `prior_radius_km` del sismo principal en los 2 / 30 / 365 días **anteriores** a él (sin contarlo). |
+| `prior_max_mag_365d` | Mayor magnitud entre esos eventos del último año. Nulo estructural si no hubo ninguno. |
+| `days_since_prior` | Días desde el evento previo más reciente de la vecindad. Nulo estructural si no hubo ninguno desde `starttime`. |
+| `prior_window_truncated` | `True` si la ventana de 365 días empieza antes que el catálogo (los conteos son un piso). |
+| `region_mc` / `region_log10_eta0` | Mc y umbral log10(eta_0) de la región (constantes en una corrida; varían al combinar regiones). |
+| `has_aftershock` | `n_aftershocks > 0`. Objetivo de clasificación. |
 
 ### `events_*.csv` — una fila es un terremoto
 

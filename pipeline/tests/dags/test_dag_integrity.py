@@ -35,7 +35,14 @@ DEPENDENCIES = {
     "build_clusters": {"thinning"},
     # La entrega es el último paso y no alimenta a nadie: escribe el csv y lo
     # valida.
-    "publish_csv": {"build_clusters"},
+    # Las features necesitan el resumen, el catálogo (sismicidad previa) y Mc/eta_0.
+    "build_features": {
+        "build_clusters",
+        "refine_silver",
+        "estimate_mc",
+        "fit_eta_threshold",
+    },
+    "publish_csv": {"build_features"},
 }
 
 
@@ -79,7 +86,15 @@ def test_query_params(dag):
 
 def test_method_params(dag):
     """Las decisiones de método también son parámetros, no constantes."""
-    assert {"mainshock", "seed", "n_randomizations"} <= set(dag.params)
+    assert {
+        "mainshock",
+        "seed",
+        "n_randomizations",
+        "r_max_km",
+        "r_max_mode",
+        "r_max_k",
+        "prior_radius_km",
+    } <= set(dag.params)
 
 
 def test_expected_tasks(dag):

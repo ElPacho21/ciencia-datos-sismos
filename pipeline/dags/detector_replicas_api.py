@@ -26,8 +26,9 @@ from airflow.sdk import Param, dag, task
 
 # Se importan los módulos enteros porque varias tareas del DAG se llaman igual
 # que la función que las hace, y de otro modo una taparía a la otra.
-from sismos import aftershocks, clusters, delivery, method_suffix, neighbors
+from sismos import aftershocks, clusters, delivery, features, method_suffix, neighbors
 from sismos.bronze import bronze_load, bronze_path, bronze_write
+from sismos.features import PRIOR_RADIUS_KM, prior_suffix
 from sismos.parameters import estimate
 from sismos.silver import refine, silver_path, silver_read, silver_write
 from sismos.threshold import fit_threshold, threshold_path, threshold_read, threshold_write
@@ -185,6 +186,18 @@ log = logging.getLogger(__name__)
             description="Only used when the cap mode is 'gk'.",
             minimum=0.1,
         ),
+        # Las features de sismicidad previa miran una vecindad del epicentro del
+        # sismo principal; el radio cambia los valores, así que va al nombre.
+        "prior_radius_km": Param(
+            PRIOR_RADIUS_KM,
+            type="number",
+            title="Prior-seismicity radius (km)",
+            description=(
+                "Radius around the mainshock epicenter within which earlier "
+                "events are counted for the n_prior_* features."
+            ),
+            minimum=1,
+        ),
         "force": Param(
             False,
             type="boolean",
@@ -222,6 +235,10 @@ def detector_replicas_api():
     def method(params) -> str:
         """Sufijo de nombre de los archivos que dependen del tope."""
         return method_suffix(**radius(params))
+
+    def delivery_method(params) -> str:
+        """Sufijo del entregable: el del tope más el de las features nuevas."""
+        return method(params) + prior_suffix(params["prior_radius_km"])
 
     @task
     def land_bronze(**context) -> str:
@@ -415,6 +432,45 @@ def detector_replicas_api():
         return output
 
     @task
+    def build_features(
+        clusters_files: dict[str, str],
+        silver_file: str,
+        parameters: dict,
+        threshold_file: str,
+        **context,
+    ) -> dict[str, str]:
+        """Suma al resumen las columnas causales, sin tocar las que ya tenía."""
+        params = context["params"]
+
+        destination = features.features_path(
+            seed=params["seed"],
+            mainshock=params["mainshock"],
+            method=delivery_method(params),
+            **query(params),
+        )
+        sources = [Path(clusters_files["summary"]), Path(silver_file), Path(threshold_file)]
+        output = {"events": clusters_files["events"], "summary": str(destination)}
+
+        if (
+            destination.exists()
+            and not params["force"]
+            and all(destination.stat().st_mtime >= f.stat().st_mtime for f in sources)
+        ):
+            log.info("Reused the features already built.")
+            return output
+
+        enriched = features.build_features(
+            clusters.clusters_read(sources[0]),
+            silver_read(sources[1]),
+            mc=parameters["mc"],
+            log10_eta0=threshold_read(sources[2])["log10_eta0"],
+            starttime=params["starttime"],
+            prior_radius_km=params["prior_radius_km"],
+        )
+        clusters.clusters_write(destination, enriched)
+        return output
+
+    @task
     def publish_csv(clusters_files: dict[str, str], **context) -> dict[str, str]:
         """El entregable: los dos csv, y el chequeo de calidad sobre ellos.
 
@@ -432,7 +488,7 @@ def detector_replicas_api():
         keys = {
             "seed": params["seed"],
             "mainshock": params["mainshock"],
-            "method": method(params),
+            "method": delivery_method(params),
             **query(params),
         }
 
@@ -453,16 +509,17 @@ def detector_replicas_api():
     silver_file = refine_silver(land_bronze())
     parameters = estimate_mc(silver_file)
     neighbors_file = nearest_neighbor(silver_file, parameters)
+    threshold_file = fit_eta_threshold(neighbors_file)
 
-    publish_csv(
-        build_clusters(
-            thinning(
-                neighbors_file,
-                randomize_catalog(silver_file, parameters),
-                fit_eta_threshold(neighbors_file),
-            )
+    clusters_files = build_clusters(
+        thinning(
+            neighbors_file,
+            randomize_catalog(silver_file, parameters),
+            threshold_file,
         )
     )
+
+    publish_csv(build_features(clusters_files, silver_file, parameters, threshold_file))
 
 
 # Sin esta llamada el DAG no queda registrado: el decorador @dag sólo devuelve

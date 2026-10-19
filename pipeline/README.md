@@ -28,7 +28,10 @@ usa un radio que depende de la magnitud del padre, `r_max_k · 10^(0.1238·M + 0
 (Gardner-Knopoff), y `r_max_km` pasa a ser un techo absoluto opcional. El mismo
 tope se aplica al catálogo nulo. Si está activo, aparece en el nombre de los
 archivos desde `neighbors/` en adelante (`_rmax=300`, `_rmax=gk3`); sin tope los
-nombres son los de siempre. Y `force` ignora todo lo ya
+nombres son los de siempre.
+`prior_radius_km` (100 por defecto) es el radio de la vecindad con la que
+`build_features` cuenta la sismicidad previa; si se cambia, el csv publicado lleva
+`_prior=<km>` en el nombre. Y `force` ignora todo lo ya
 persistido y recalcula de cero.
 
 La ventana tiene que ser **larga**. El método necesita al menos 50 eventos por
