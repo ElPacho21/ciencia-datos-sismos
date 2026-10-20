@@ -22,7 +22,7 @@ import pendulum
 from airflow.providers.standard.operators.trigger_dagrun import TriggerDagRunOperator
 from airflow.sdk import Param, dag, task
 
-from sismos import delivery
+from sismos import delivery, horizons
 from sismos.features import PRIOR_RADIUS_KM, delivery_suffix
 from sismos.regions import BORDER_BUFFER_KM, combine_regions, load_regions, regions_tag
 
@@ -40,6 +40,7 @@ METHOD_PARAMS = (
     "r_max_k",
     "prior_radius_km",
     "border_buffer_km",
+    "horizon_days",
     "force",
 )
 
@@ -60,6 +61,7 @@ METHOD_PARAMS = (
         "r_max_k": Param(3.0, type="number", minimum=0.1),
         "prior_radius_km": Param(PRIOR_RADIUS_KM, type="number", minimum=1),
         "border_buffer_km": Param(BORDER_BUFFER_KM, type="number", minimum=0),
+        "horizon_days": Param(horizons.HORIZON_DAYS, type="number", minimum=1),
         "force": Param(False, type="boolean"),
     },
 )
@@ -141,6 +143,31 @@ def detector_replicas_regions():
             )
 
         log.info("Combined dataset published to %s | quality: %s", destination, report)
+
+        # Los objetivos por horizonte de cada región, con la misma columna `region`.
+        tables = []
+        for region in regions:
+            path = horizons.horizons_path(
+                seed=params["seed"],
+                mainshock=params["mainshock"],
+                method=method,
+                horizon_days=params["horizon_days"],
+                starttime=str(region["starttime"]),
+                endtime=str(region["endtime"]),
+                minmagnitude=region["minmagnitude"],
+                minlatitude=region["minlatitude"],
+                maxlatitude=region["maxlatitude"],
+                minlongitude=region["minlongitude"],
+                maxlongitude=region["maxlongitude"],
+            )
+            tables.append(pd.read_csv(path).assign(region=region["name"]))
+        long_table = pd.concat(tables, ignore_index=True)
+        horizons_destination = horizons.combined_horizons_path(
+            regions_tag(regions), params["seed"], params["mainshock"], method,
+            params["horizon_days"],
+        )
+        delivery.write_csv(horizons_destination, long_table)
+        log.info("Combined horizons published to %s.", horizons_destination)
         return str(destination)
 
     run_regions >> combine()

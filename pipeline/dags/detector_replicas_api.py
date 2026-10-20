@@ -28,6 +28,7 @@ from airflow.sdk import Param, dag, task
 # que la función que las hace, y de otro modo una taparía a la otra.
 from sismos import aftershocks, clusters, delivery, features, method_suffix, neighbors
 from sismos.bronze import bronze_load, bronze_path, bronze_write
+from sismos import horizons
 from sismos.features import PRIOR_RADIUS_KM, delivery_suffix
 from sismos.parameters import estimate
 from sismos.regions import BORDER_BUFFER_KM
@@ -209,6 +210,16 @@ log = logging.getLogger(__name__)
                 "aftershocks that fell outside."
             ),
             minimum=0,
+        ),
+        "horizon_days": Param(
+            horizons.HORIZON_DAYS,
+            type="number",
+            title="Prediction window T (days)",
+            description=(
+                "Length of the window the per-horizon targets look at: "
+                "y_aft counts the aftershocks between t hours and T days."
+            ),
+            minimum=1,
         ),
         "force": Param(
             False,
@@ -531,6 +542,31 @@ def detector_replicas_api():
         log.info("Dataset published to %s | quality: %s", destinations["dataset"], report)
         return destinations
 
+    @task
+    def publish_horizons(clusters_files: dict[str, str], **context) -> str:
+        """Los objetivos por horizonte, en un csv largo aparte (ver `sismos.horizons`)."""
+        params = context["params"]
+        destination = horizons.horizons_path(
+            seed=params["seed"],
+            mainshock=params["mainshock"],
+            method=delivery_method(params),
+            horizon_days=params["horizon_days"],
+            **query(params),
+        )
+
+        summary = clusters.clusters_read(Path(clusters_files["summary"]))
+        table = horizons.build_horizons(
+            summary,
+            clusters.clusters_read(Path(clusters_files["events"])),
+            endtime=params["endtime"],
+            horizon_days=params["horizon_days"],
+        )
+        horizons.check_invariants(table, summary, params["horizon_days"])
+
+        delivery.write_csv(destination, table)
+        log.info("Horizons published to %s (%d rows).", destination, len(table))
+        return str(destination)
+
     silver_file = refine_silver(land_bronze())
     parameters = estimate_mc(silver_file)
     neighbors_file = nearest_neighbor(silver_file, parameters)
@@ -544,7 +580,9 @@ def detector_replicas_api():
         )
     )
 
-    publish_csv(build_features(clusters_files, silver_file, parameters, threshold_file))
+    enriched_files = build_features(clusters_files, silver_file, parameters, threshold_file)
+    publish_csv(enriched_files)
+    publish_horizons(enriched_files)
 
 
 # Sin esta llamada el DAG no queda registrado: el decorador @dag sólo devuelve

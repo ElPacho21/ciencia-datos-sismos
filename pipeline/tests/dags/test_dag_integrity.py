@@ -43,6 +43,7 @@ DEPENDENCIES = {
         "fit_eta_threshold",
     },
     "publish_csv": {"build_features"},
+    "publish_horizons": {"build_features"},
 }
 
 
@@ -95,6 +96,7 @@ def test_method_params(dag):
         "r_max_k",
         "prior_radius_km",
         "border_buffer_km",
+        "horizon_days",
     } <= set(dag.params)
 
 

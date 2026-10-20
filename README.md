@@ -257,6 +257,32 @@ hubo ningún evento previo en la vecindad. `prior_window_truncated` marca las
 secuencias cuya ventana de 365 días arranca antes que el catálogo: sus conteos
 son un piso, no el valor real.
 
+### `publish_horizons` → "parado a *t* horas del principal, ¿cuántas réplicas más?"
+
+`n_aftershocks` cuenta la secuencia entera, así que casi todo lo que se sabe del
+cluster es fuga para predecirlo. Esta tarea reformula la pregunta con un instante de
+predicción explícito y publica `horizons_*.csv`, **aparte** de `clusters_*.csv` (que no
+se ensancha): una fila por (`cluster_id`, `horizon_hours`), con horizontes de 1, 6, 24,
+72 y 168 horas y una ventana de objetivo de `T` = `horizon_days` (30 por defecto).
+
+| Columna | Qué es |
+|---|---|
+| `horizon_hours` | El instante de predicción `t`, en horas desde `mainshock_time`. Es una feature más. |
+| `n_aft_t` | Réplicas (mismo criterio que `n_aftershocks`) hasta `t`. |
+| `max_aft_mag_t` | Mayor magnitud entre ellas. Nulo estructural si todavía no hubo ninguna. |
+| `hours_since_last_t` | Horas desde el último evento visto; si no hubo réplicas, desde el sismo principal. Nunca nulo. |
+| `y_aft` / `y_has_aft` | **Objetivo**: réplicas entre `t` y `T` días (conteo y `> 0`). |
+| `n_aft_T` | Réplicas hasta `T` días. Siempre `n_aft_t + y_aft`. |
+| `censored_T` | `mainshock_time + T` pasa de `endtime`: el catálogo no alcanza a ver toda la ventana. Se marca, no se borra. |
+| `censored_t` | Lo mismo para la ventana de features (`mainshock_time + t > endtime`). |
+
+Al entrenar hay que separar train y test **por `cluster_id`** (`GroupKFold`): las cinco
+filas de un cluster comparten secuencia y, repartidas entre los dos lados, filtran. Y
+dos advertencias de causalidad: la pertenencia al cluster y η₀ se ajustan con el
+catálogo completo (no son recomputables "hasta *t*"), y el sismo principal es el mayor
+del cluster, que sólo se sabe una vez que ocurrió. En la corrida de referencia salen
+9.890 filas (1.978 × 5) y 283 positivas entre las no censuradas.
+
 ### `publish_csv` → el entregable, y dudar de él
 
 Las capas anteriores escriben parquet: se leen entre tareas y ya vienen
