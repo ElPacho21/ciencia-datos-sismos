@@ -94,6 +94,7 @@ def test_method_params(dag):
         "r_max_mode",
         "r_max_k",
         "prior_radius_km",
+        "border_buffer_km",
     } <= set(dag.params)
 
 

@@ -308,6 +308,9 @@ objetivo de cada uno ya están en la tabla de más arriba; acá está el resto.
 | `prior_window_truncated` | `True` si la ventana de 365 días empieza antes que el catálogo (los conteos son un piso). |
 | `region_mc` / `region_log10_eta0` | Mc y umbral log10(eta_0) de la región (constantes en una corrida; varían al combinar regiones). |
 | `has_aftershock` | `n_aftershocks > 0`. Objetivo de clasificación. |
+| `dist_to_border_km` | Distancia, sobre la esfera, del epicentro del sismo principal al borde más cercano del rectángulo consultado. |
+| `near_border` | `dist_to_border_km < border_buffer_km` (100 km por defecto). Una secuencia pegada al borde pudo perder réplicas que cayeron afuera: sus conteos son un piso. |
+| `region` | Sólo en `clusters_combined_*.csv`: de qué región de `regions.yaml` sale la fila. |
 
 ### `events_*.csv` — una fila es un terremoto
 

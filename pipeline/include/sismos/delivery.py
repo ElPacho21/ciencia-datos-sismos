@@ -60,6 +60,17 @@ def events_path(seed, mainshock, method="", **query) -> Path:
     )
 
 
+def combined_path(tag, seed, mainshock, method="") -> Path:
+    """El entregable de varias regiones concatenadas.
+
+    `tag` identifica la configuración de regiones (ver `regions.regions_tag`),
+    que es lo que lo distingue de las corridas de una sola región.
+    """
+    return DELIVERY_DIR / (
+        f"clusters_combined_{tag}{method}_mainshock={mainshock}_seed={seed}.csv"
+    )
+
+
 def write_csv(destination: Path, df: pd.DataFrame) -> None:
     """CSV plano, sin índice y con las fechas en ISO 8601.
 

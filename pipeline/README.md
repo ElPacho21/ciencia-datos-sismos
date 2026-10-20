@@ -33,6 +33,26 @@ nombres son los de siempre.
 `build_features` cuenta la sismicidad previa; si se cambia, el csv publicado lleva
 `_prior=<km>` en el nombre. Y `force` ignora todo lo ya
 persistido y recalcula de cero.
+`border_buffer_km` (100 por defecto) es la distancia al borde del rectángulo por
+debajo de la cual un sismo principal se marca `near_border`; si se cambia, el nombre
+lleva `_border=<km>`. Las columnas `dist_to_border_km` y `near_border` sólo existen
+cuando los cuatro bordes del rectángulo están definidos.
+
+### Varias regiones: `detector_replicas_regions`
+
+El método supone un catálogo homogéneo, así que no se corre sobre el mundo entero:
+cada región de `include/sismos/regions.yaml` (nombre, rectángulo, `starttime`,
+`endtime`, `minmagnitude`) se procesa por separado, con su propio Mc y su propio
+η₀. Este DAG dispara `detector_replicas_api` una vez por región (con `limit=0`, así
+las ventanas largas se bajan en varios pedidos) y espera a que terminen; después
+concatena los csv, agrega la columna `region` y publica
+`clusters_combined_<n>regions-<hash>..._mainshock=..._seed=....csv`. El hash cambia si
+cambia cualquier rectángulo o fecha del yaml. Los parámetros de método (`mainshock`,
+`seed`, `r_max_*`, `prior_radius_km`, `border_buffer_km`, `force`) se reenvían tal
+cual a cada región. Los rectángulos no pueden solaparse ni cruzar el antimeridiano
+(el servicio no lo admite); `regions.validate_regions` lo chequea antes de correr.
+`scripts/explore_regions.py` sirve para elegir ventanas y bordes con números: Mc por
+bloques de 5 años, densidad de epicentros a lo largo del arco y sismos M ≥ 8.
 
 La ventana tiene que ser **larga**. El método necesita al menos 50 eventos por
 encima de la magnitud de completitud, y `estimate_mc` corta la corrida si no

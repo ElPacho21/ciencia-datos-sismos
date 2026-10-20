@@ -1,0 +1,53 @@
+# Regiones independientes del detector de réplicas (ver sismos/regions.py).
+# Cada una se procesa con su propio Mc y su propio eta_0. Los rectángulos no se
+# solapan y ninguno cruza el antimeridiano (el FDSN no lo admite).
+#
+# Las fechas de arranque salen de explorar Mc por bloques de 5 años
+# (scripts/explore_regions.py): se estabiliza en 4,4-4,8 desde 2003 en todas las
+# regiones menos Andes, donde 1988-2008 muestra un régimen de magnitudes
+# distinto (Mc 3,7-4,0) y por eso arranca en 2008.
+regions:
+  - name: andes
+    minlatitude: -55
+    maxlatitude: -18
+    minlongitude: -76
+    maxlongitude: -53
+    starttime: "2008-01-01"
+    endtime: "2026-01-01"
+    minmagnitude: 3.5
+
+  - name: japan
+    minlatitude: 30
+    maxlatitude: 46
+    minlongitude: 128
+    maxlongitude: 148
+    starttime: "2003-01-01"
+    endtime: "2026-01-01"
+    minmagnitude: 4.0
+
+  - name: philippines
+    minlatitude: 5
+    maxlatitude: 20
+    minlongitude: 117
+    maxlongitude: 128
+    starttime: "2003-01-01"
+    endtime: "2026-01-01"
+    minmagnitude: 4.0
+
+  - name: sumatra_java
+    minlatitude: -11
+    maxlatitude: 14
+    minlongitude: 92
+    maxlongitude: 115
+    starttime: "2003-01-01"
+    endtime: "2026-01-01"
+    minmagnitude: 4.0
+
+  - name: mexico_ca
+    minlatitude: 8
+    maxlatitude: 21
+    minlongitude: -110
+    maxlongitude: -81
+    starttime: "2003-01-01"
+    endtime: "2026-01-01"
+    minmagnitude: 3.5

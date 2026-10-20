@@ -24,9 +24,10 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from sismos import OUTPUT_DIR, partition
+from sismos import OUTPUT_DIR, method_suffix, partition
 from sismos.geo import EARTH_RADIUS_KM
 from sismos.parameters import MAGNITUDE_BIN, trim_to_mc
+from sismos.regions import BORDER_BUFFER_KM, add_border_columns, border_suffix
 
 log = logging.getLogger(__name__)
 
@@ -40,6 +41,26 @@ PRIOR_RADIUS_KM = 100.0
 SECONDS_PER_DAY = 86400.0
 
 FEATURES_DIR = OUTPUT_DIR / "features"
+
+
+def delivery_suffix(
+    r_max_km=None,
+    r_max_mode="fixed",
+    r_max_k=3.0,
+    prior_radius_km=PRIOR_RADIUS_KM,
+    border_buffer_km=BORDER_BUFFER_KM,
+) -> str:
+    """Todo lo que, además de los datos de entrada, cambia el csv publicado.
+
+    Es la suma del tope de distancia, el radio de la sismicidad previa y el
+    buffer del borde. Vacío si están todos en su valor por defecto, así los
+    nombres de la corrida de referencia no se mueven.
+    """
+    return (
+        method_suffix(r_max_km, r_max_mode, r_max_k)
+        + prior_suffix(prior_radius_km)
+        + border_suffix(border_buffer_km)
+    )
 
 
 def features_path(seed, mainshock, method="", **query) -> Path:
@@ -151,8 +172,14 @@ def build_features(
     log10_eta0: float,
     starttime,
     prior_radius_km: float = PRIOR_RADIUS_KM,
+    bbox=None,
+    border_buffer_km: float = BORDER_BUFFER_KM,
 ) -> pd.DataFrame:
     """Devuelve el resumen con las columnas nuevas **al final**.
+
+    Con `bbox` (min_lat, max_lat, min_lon, max_lon) suma además qué tan cerca
+    del borde del rectángulo cae cada sismo principal. Sin rectángulo (consulta
+    al planeta entero) no hay borde y esas columnas no se agregan.
 
     Las columnas que ya existían no se tocan ni cambian de lugar: lo que ya
     consume el notebook de análisis sigue funcionando igual.
@@ -168,6 +195,9 @@ def build_features(
     out["region_mc"] = float(mc)
     out["region_log10_eta0"] = float(log10_eta0)
     out["has_aftershock"] = out["n_aftershocks"] > 0
+
+    if bbox is not None:
+        out = add_border_columns(out, bbox, border_buffer_km)
 
     # Una columna entera en nulo hace fallar la publicación sin decir por qué;
     # mejor avisar acá, con el motivo más probable.

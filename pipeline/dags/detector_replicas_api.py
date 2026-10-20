@@ -28,8 +28,9 @@ from airflow.sdk import Param, dag, task
 # que la función que las hace, y de otro modo una taparía a la otra.
 from sismos import aftershocks, clusters, delivery, features, method_suffix, neighbors
 from sismos.bronze import bronze_load, bronze_path, bronze_write
-from sismos.features import PRIOR_RADIUS_KM, prior_suffix
+from sismos.features import PRIOR_RADIUS_KM, delivery_suffix
 from sismos.parameters import estimate
+from sismos.regions import BORDER_BUFFER_KM
 from sismos.silver import refine, silver_path, silver_read, silver_write
 from sismos.threshold import fit_threshold, threshold_path, threshold_read, threshold_write
 from sismos.usgs_earthquake import fetch
@@ -198,6 +199,17 @@ log = logging.getLogger(__name__)
             ),
             minimum=1,
         ),
+        "border_buffer_km": Param(
+            BORDER_BUFFER_KM,
+            type="number",
+            title="Border buffer (km)",
+            description=(
+                "A mainshock closer than this to the edge of the queried "
+                "rectangle is flagged near_border: it may have lost "
+                "aftershocks that fell outside."
+            ),
+            minimum=0,
+        ),
         "force": Param(
             False,
             type="boolean",
@@ -238,7 +250,11 @@ def detector_replicas_api():
 
     def delivery_method(params) -> str:
         """Sufijo del entregable: el del tope más el de las features nuevas."""
-        return method(params) + prior_suffix(params["prior_radius_km"])
+        return delivery_suffix(
+            **radius(params),
+            prior_radius_km=params["prior_radius_km"],
+            border_buffer_km=params["border_buffer_km"],
+        )
 
     @task
     def land_bronze(**context) -> str:
@@ -459,6 +475,13 @@ def detector_replicas_api():
             log.info("Reused the features already built.")
             return output
 
+        edges = [
+            params[k]
+            for k in ("minlatitude", "maxlatitude", "minlongitude", "maxlongitude")
+        ]
+        # Sin rectángulo completo (planeta entero) no hay borde que medir.
+        bbox = tuple(edges) if all(e is not None for e in edges) else None
+
         enriched = features.build_features(
             clusters.clusters_read(sources[0]),
             silver_read(sources[1]),
@@ -466,6 +489,8 @@ def detector_replicas_api():
             log10_eta0=threshold_read(sources[2])["log10_eta0"],
             starttime=params["starttime"],
             prior_radius_km=params["prior_radius_km"],
+            bbox=bbox,
+            border_buffer_km=params["border_buffer_km"],
         )
         clusters.clusters_write(destination, enriched)
         return output
