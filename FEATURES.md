@@ -95,6 +95,36 @@ chica (la de 2 días, la mejor). Es un resultado honesto: el modelo del que se p
 Pearson 0,634 con Spearman 0,163: lo arrastran pocas secuencias (el enjambre de Tohoku),
 no una relación general.
 
+## Qué agrega al modelo
+
+`scripts/feature_baseline.py` mide el aporte con un `HistGradientBoosting` sobre
+`log1p(n_aftershocks)`, contra dos predicciones triviales. Con 19.570 secuencias:
+
+| modelo | R² | MAE(log) | MAE réplicas |
+|---|---|---|---|
+| trivial: 0 réplicas (la mediana) | −0,077 | 0,115 | 0,834 |
+| trivial: media de log1p | 0,000 | 0,206 | 0,930 |
+| magnitud + profundidad + posición + región | 0,559 | 0,126 | 0,784 |
+| + sismicidad previa | 0,575 | 0,124 | 0,779 |
+
+Con corte temporal 70/30 (viejas a train, nuevas a test) el salto es 0,520 → 0,554. Las
+features nuevas suman entre 0,02 y 0,03 de R²; `n_prior_2d`, `n_prior_365d` y
+`days_since_prior` son las que aportan. Nada de eso mueve el MAE en réplicas, que está
+dominado por los ceros y por cuatro secuencias gigantes.
+
+El valor de `n_prior_2d` se ve mejor condicionando por magnitud. En M5-6, la proporción
+de secuencias con al menos una réplica pasa de 21,0 % (sin actividad previa) a 43,6 %
+(1-4 eventos) y 81,2 % (5 o más); en M6-7, de 75,1 % a 92,2 % y 100 %. No está confundida
+con la magnitud (Spearman entre ambas: 0,009).
+
+Dos advertencias para cuando se entrene en serio: el 89,4 % del objetivo es cero, así que
+conviene `log1p`, Poisson o un modelo en dos etapas (clasificar `has_aftershock` y después
+contar); y el bloque `n_prior_*` cuenta también los premonitores de la misma secuencia, o
+sea que parte de su señal es "esta secuencia ya venía grande". Para un escenario en tiempo
+real conviene la tabla de horizontes, donde lo observado hasta `t` es causal de verdad:
+a 1 h, el R² de `y_aft` pasa de 0,495 a 0,552 al sumar `n_aft_t`, `max_aft_mag_t` y
+`hours_since_last_t`.
+
 ## Corrida de referencia (defaults)
 
 Con los parámetros por defecto la corrida original no cambió: 2.321 eventos ≥ Mc, 1.978
