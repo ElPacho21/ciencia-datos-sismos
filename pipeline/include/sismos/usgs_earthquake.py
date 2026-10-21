@@ -14,9 +14,11 @@ puede venir repetido, pero silver deduplica por `id`, así que no hace daño.
 """
 
 import logging
+import random
 import time
 
 import pendulum
+import requests
 from airflow.providers.http.hooks.http import HttpHook
 
 log = logging.getLogger(__name__)
@@ -28,6 +30,21 @@ EVENT_COUNT = "/fdsnws/event/1/count"
 # Lo que el servicio admite por consulta. Más que esto no lo trunca: lo rechaza
 # con HTTP 400, así que hay que partir el pedido en varios.
 SERVICE_LIMIT = 20000
+
+# Cuántos pedidos se hacen como máximo ante un fallo transitorio, y cuánto se
+# espera entre uno y otro. La espera se duplica por intento y se sortea dentro
+# de una banda: cinco corridas disparadas a la vez no vuelven todas en el mismo
+# instante a golpear el servicio. Techo para no quedarse colgado media hora.
+ATTEMPTS = 5
+BACKOFF_BASE_SECONDS = 2.0
+BACKOFF_MAX_SECONDS = 30.0
+
+# Lo que el servicio tarda en armar una respuesta de 20000 eventos no es lo que
+# tarda en contestar un conteo: con 60 s, un trozo grande del catálogo de Japón
+# se cortaba por lectura y el reintento volvía a pedir lo mismo, con el mismo
+# límite. El timeout es del pedido, no del servicio: si contesta antes, se
+# sigue igual.
+TIMEOUT_SECONDS = 180
 
 
 def _query(
@@ -48,9 +65,33 @@ def _query(
     return params
 
 
-def _request(hook, endpoint, params, timeout, retries):
-    """Un pedido al servicio, con reintentos espaciados."""
-    for attempt in range(retries):
+def _is_transient(error: Exception) -> bool:
+    """Si el fallo es del servicio y vale la pena volver a pedir.
+
+    Un 5xx o un 429 son transitorios: el mismo pedido puede salir bien un
+    segundo después. Un 4xx dice que la consulta está mal armada —repetirla
+    devuelve exactamente el mismo error— y una excepción que no viene de HTTP
+    es un bug de acá: en los dos casos conviene fallar rápido en vez de
+    demorar el diagnóstico.
+    """
+    if isinstance(
+        error, (requests.exceptions.ConnectionError, requests.exceptions.Timeout)
+    ):
+        return True
+    # `HttpHook.check_response` convierte el status en AirflowException("502:Bad Gateway").
+    code = str(error).partition(":")[0].strip()
+    return code.isdigit() and (int(code) >= 500 or int(code) == 429)
+
+
+def _backoff(attempt: int) -> float:
+    """Espera antes del intento siguiente: 2, 4, 8, 16 s, con jitter y tope."""
+    delay = min(BACKOFF_BASE_SECONDS * 2**attempt, BACKOFF_MAX_SECONDS)
+    return random.uniform(delay / 2, delay)
+
+
+def _request(hook, endpoint, params, timeout, attempts=ATTEMPTS):
+    """Un pedido al servicio, con reintentos espaciados ante fallos transitorios."""
+    for attempt in range(attempts):
         try:
             response = hook.run(
                 endpoint=endpoint,
@@ -58,10 +99,19 @@ def _request(hook, endpoint, params, timeout, retries):
                 extra_options={"check_response": True, "timeout": timeout},
             )
             return response
-        except Exception:
-            if attempt == retries - 1:
+        except Exception as error:
+            if attempt == attempts - 1 or not _is_transient(error):
                 raise
-            time.sleep(2 * (attempt + 1))
+            delay = _backoff(attempt)
+            log.warning(
+                "Attempt %d/%d to %s failed (%s): retrying in %.1f s.",
+                attempt + 1,
+                attempts,
+                endpoint,
+                error,
+                delay,
+            )
+            time.sleep(delay)
 
 
 def count(
@@ -70,8 +120,8 @@ def count(
     eventtype="earthquake",
     minmagnitude=0,
     bbox=None,
-    timeout=60,
-    retries=3,
+    timeout=TIMEOUT_SECONDS,
+    attempts=ATTEMPTS,
 ) -> int:
     """Cuántos eventos empareja la consulta, sin bajarlos."""
     hook = HttpHook(method="GET", http_conn_id=CONN_ID)
@@ -82,7 +132,7 @@ def count(
             starttime, endtime, minmagnitude, eventtype, bbox, fmt="geojson"
         ),
         timeout,
-        retries,
+        attempts,
     )
     return int(response.json()["count"])
 
@@ -107,7 +157,7 @@ def _concatenate(chunks: list[bytes]) -> bytes:
 
 
 def _download(
-    hook, start, end, total, base_query, bbox, timeout, retries
+    hook, start, end, total, base_query, bbox, timeout, attempts
 ) -> list[bytes]:
     """Baja el rango, partiéndolo por la mitad mientras no entre en una consulta.
 
@@ -126,7 +176,7 @@ def _download(
             EVENT_QUERY,
             {**base_query, "starttime": start, "endtime": end},
             timeout,
-            retries,
+            attempts,
         )
         return [response.content]
 
@@ -147,14 +197,14 @@ def _download(
         minmagnitude=base_query["minmagnitude"],
         bbox=bbox,
         timeout=timeout,
-        retries=retries,
+        attempts=attempts,
     )
 
     # Un evento justo en el borde puede caer en las dos mitades. No se corrige
     # acá: silver deduplica por `id`, y correr el borde un microsegundo abriría
     # la puerta a perder eventos, que es el error caro.
     return _download(
-        hook, start, mid, left_total, base_query, bbox, timeout, retries
+        hook, start, mid, left_total, base_query, bbox, timeout, attempts
     ) + _download(
         hook,
         mid,
@@ -163,7 +213,7 @@ def _download(
         base_query,
         bbox,
         timeout,
-        retries,
+        attempts,
     )
 
 
@@ -178,8 +228,8 @@ def fetch(
     maxlatitude=None,
     minlongitude=None,
     maxlongitude=None,
-    timeout=60,
-    retries=3,
+    timeout=TIMEOUT_SECONDS,
+    attempts=ATTEMPTS,
 ) -> bytes:
     bbox = {
         "minlatitude": minlatitude,
@@ -200,7 +250,7 @@ def fetch(
         minmagnitude=minmagnitude,
         bbox=bbox,
         timeout=timeout,
-        retries=retries,
+        attempts=attempts,
     )
 
     if total == 0:
@@ -228,7 +278,7 @@ def fetch(
     base_query.pop("endtime")
 
     chunks = _download(
-        hook, start, end, total, base_query, bbox, timeout, retries
+        hook, start, end, total, base_query, bbox, timeout, attempts
     )
 
     if len(chunks) > 1:

@@ -19,6 +19,7 @@ es un terremoto y el objetivo es `is_aftershock`.
 from __future__ import annotations
 
 import logging
+from datetime import timedelta
 from pathlib import Path
 
 import pendulum
@@ -267,7 +268,11 @@ def detector_replicas_api():
             border_buffer_km=params["border_buffer_km"],
         )
 
-    @task
+    # Es la única tarea que habla con la red, y el USGS devuelve 5xx de vez en
+    # cuando. Los reintentos del cliente cubren un parpadeo de segundos; estos
+    # cubren una caída de un par de minutos, que es lo que tumbaba la corrida
+    # entera de las regiones por culpa de una sola de ellas.
+    @task(retries=2, retry_delay=timedelta(minutes=1))
     def land_bronze(**context) -> str:
         params = context["params"]
 
